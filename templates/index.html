@@ -1,0 +1,668 @@
+<!DOCTYPE html>
+<html lang="hu">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Családfakutató - FamilySearch</title>
+    <link rel="stylesheet" href="/static/css/style.css">
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+</head>
+<body>
+    <div id="app">
+        <!-- Navigáció -->
+        <nav class="navbar">
+            <div class="navbar-brand">
+                <i class="fas fa-tree"></i>
+                <span>Családfakutató</span>
+            </div>
+            <div class="navbar-menu">
+                <button class="nav-btn active" data-view="tree">
+                    <i class="fas fa-sitemap"></i> Családfa
+                </button>
+                <button class="nav-btn" data-view="persons">
+                    <i class="fas fa-users"></i> Személyek
+                </button>
+                <button class="nav-btn" data-view="stats">
+                    <i class="fas fa-chart-bar"></i> Statisztika
+                </button>
+                <button class="nav-btn" data-view="settings">
+                    <i class="fas fa-cog"></i> Beállítások
+                </button>
+            </div>
+            <div class="navbar-actions">
+                <div class="search-box">
+                    <input type="text" id="global-search" placeholder="Keresés...">
+                    <i class="fas fa-search"></i>
+                    <div id="search-results" class="search-results"></div>
+                </div>
+                <button class="btn btn-primary" id="add-person-btn">
+                    <i class="fas fa-plus"></i> Új személy
+                </button>
+            </div>
+        </nav>
+
+        <!-- Fő tartalom -->
+        <main class="main-content">
+            <!-- Családfa nézet -->
+            <div id="tree-view" class="view active">
+                <div class="tree-toolbar">
+                    <div class="toolbar-group">
+                        <button class="toolbar-btn" id="zoom-in" title="Nagyítás">
+                            <i class="fas fa-search-plus"></i>
+                        </button>
+                        <button class="toolbar-btn" id="zoom-out" title="Kicsinyítés">
+                            <i class="fas fa-search-minus"></i>
+                        </button>
+                        <button class="toolbar-btn" id="zoom-reset" title="Visszaállítás">
+                            <i class="fas fa-compress-arrows-alt"></i>
+                        </button>
+                        <button class="toolbar-btn" id="center-tree" title="Középre">
+                            <i class="fas fa-crosshairs"></i>
+                        </button>
+                    </div>
+                    <div class="toolbar-group">
+                        <select id="tree-layout" class="toolbar-select">
+                            <option value="vertical">Függőleges</option>
+                            <option value="horizontal">Vízszintes</option>
+                            <option value="radial">Körkörös</option>
+                        </select>
+                        <select id="root-person" class="toolbar-select">
+                            <option value="">-- Gyökér személy --</option>
+                        </select>
+                    </div>
+                    <div class="toolbar-group">
+                        <button class="toolbar-btn" id="export-image" title="Kép exportálás">
+                            <i class="fas fa-image"></i>
+                        </button>
+                        <button class="toolbar-btn" id="export-gedcom" title="GEDCOM exportálás">
+                            <i class="fas fa-file-export"></i>
+                        </button>
+                        <button class="toolbar-btn" id="fullscreen" title="Teljes képernyő">
+                            <i class="fas fa-expand"></i>
+                        </button>
+                    </div>
+                </div>
+                <div id="tree-container">
+                    <svg id="family-tree"></svg>
+                </div>
+            </div>
+
+            <!-- Személyek lista nézet -->
+            <div id="persons-view" class="view">
+                <div class="persons-header">
+                    <h2>Családtagok</h2>
+                    <div class="filter-group">
+                        <select id="filter-gender">
+                            <option value="">Minden nem</option>
+                            <option value="male">Férfi</option>
+                            <option value="female">Nő</option>
+                        </select>
+                        <select id="filter-status">
+                            <option value="">Minden státusz</option>
+                            <option value="alive">Élő</option>
+                            <option value="deceased">Elhunyt</option>
+                        </select>
+                        <select id="sort-by">
+                            <option value="name">Név szerint</option>
+                            <option value="birth">Születés szerint</option>
+                            <option value="recent">Legutóbb hozzáadott</option>
+                        </select>
+                    </div>
+                </div>
+                <div id="persons-grid" class="persons-grid"></div>
+            </div>
+
+            <!-- Statisztikák nézet -->
+            <div id="stats-view" class="view">
+                <div class="stats-grid">
+                    <div class="stat-card">
+                        <div class="stat-icon"><i class="fas fa-users"></i></div>
+                        <div class="stat-value" id="stat-total">0</div>
+                        <div class="stat-label">Összes személy</div>
+                    </div>
+                    <div class="stat-card">
+                        <div class="stat-icon"><i class="fas fa-heart"></i></div>
+                        <div class="stat-value" id="stat-living">0</div>
+                        <div class="stat-label">Élő</div>
+                    </div>
+                    <div class="stat-card">
+                        <div class="stat-icon"><i class="fas fa-cross"></i></div>
+                        <div class="stat-value" id="stat-deceased">0</div>
+                        <div class="stat-label">Elhunyt</div>
+                    </div>
+                    <div class="stat-card">
+                        <div class="stat-icon"><i class="fas fa-ring"></i></div>
+                        <div class="stat-value" id="stat-marriages">0</div>
+                        <div class="stat-label">Házasság</div>
+                    </div>
+                    <div class="stat-card">
+                        <div class="stat-icon"><i class="fas fa-layer-group"></i></div>
+                        <div class="stat-value" id="stat-generations">0</div>
+                        <div class="stat-label">Generáció</div>
+                    </div>
+                </div>
+                <div class="stats-charts">
+                    <div class="chart-container">
+                        <h3>Nemek aránya</h3>
+                        <canvas id="gender-chart"></canvas>
+                    </div>
+                    <div class="chart-container">
+                        <h3>Születések évtizedenként</h3>
+                        <canvas id="births-chart"></canvas>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Beállítások nézet -->
+            <div id="settings-view" class="view">
+                <div class="settings-container">
+                    <h2>Megjelenítési beállítások</h2>
+                    
+                    <div class="settings-section">
+                        <h3><i class="fas fa-palette"></i> Színek</h3>
+                        <div class="settings-grid">
+                            <div class="setting-item">
+                                <label>Férfi szín</label>
+                                <input type="color" id="setting-male-color" value="#4A90D9">
+                            </div>
+                            <div class="setting-item">
+                                <label>Női szín</label>
+                                <input type="color" id="setting-female-color" value="#D94A8C">
+                            </div>
+                            <div class="setting-item">
+                                <label>Ismeretlen nem</label>
+                                <input type="color" id="setting-unknown-color" value="#808080">
+                            </div>
+                            <div class="setting-item">
+                                <label>Vonal szín</label>
+                                <input type="color" id="setting-line-color" value="#666666">
+                            </div>
+                            <div class="setting-item">
+                                <label>Háttér szín</label>
+                                <input type="color" id="setting-bg-color" value="#F5F5F5">
+                            </div>
+                            <div class="setting-item">
+                                <label>Elhunyt átlátszóság</label>
+                                <input type="range" id="setting-deceased-opacity" min="0.3" max="1" step="0.1" value="0.7">
+                            </div>
+                        </div>
+                    </div>
+
+                    <div class="settings-section">
+                        <h3><i class="fas fa-square"></i> Kártyák</h3>
+                        <div class="settings-grid">
+                            <div class="setting-item">
+                                <label>Szélesség (px)</label>
+                                <input type="number" id="setting-card-width" value="200" min="150" max="400">
+                            </div>
+                            <div class="setting-item">
+                                <label>Magasság (px)</label>
+                                <input type="number" id="setting-card-height" value="100" min="80" max="200">
+                            </div>
+                            <div class="setting-item">
+                                <label>Kerekítés (px)</label>
+                                <input type="number" id="setting-border-radius" value="8" min="0" max="30">
+                            </div>
+                            <div class="setting-item">
+                                <label>Vonal vastagság</label>
+                                <input type="number" id="setting-line-width" value="2" min="1" max="5">
+                            </div>
+                        </div>
+                    </div>
+
+                    <div class="settings-section">
+                        <h3><i class="fas fa-eye"></i> Megjelenített információk</h3>
+                        <div class="settings-grid">
+                            <div class="setting-item checkbox">
+                                <input type="checkbox" id="setting-show-photos" checked>
+                                <label for="setting-show-photos">Fényképek mutatása</label>
+                            </div>
+                            <div class="setting-item checkbox">
+                                <input type="checkbox" id="setting-show-dates" checked>
+                                <label for="setting-show-dates">Dátumok mutatása</label>
+                            </div>
+                            <div class="setting-item checkbox">
+                                <input type="checkbox" id="setting-show-places">
+                                <label for="setting-show-places">Helyek mutatása</label>
+                            </div>
+                            <div class="setting-item checkbox">
+                                <input type="checkbox" id="setting-show-occupation">
+                                <label for="setting-show-occupation">Foglalkozás mutatása</label>
+                            </div>
+                        </div>
+                    </div>
+
+                    <div class="settings-section">
+                        <h3><i class="fas fa-font"></i> Betűtípus</h3>
+                        <div class="settings-grid">
+                            <div class="setting-item">
+                                <label>Betűtípus</label>
+                                <select id="setting-font-family">
+                                    <option value="Arial, sans-serif">Arial</option>
+                                    <option value="'Times New Roman', serif">Times New Roman</option>
+                                    <option value="Georgia, serif">Georgia</option>
+                                    <option value="'Courier New', monospace">Courier New</option>
+                                    <option value="Verdana, sans-serif">Verdana</option>
+                                </select>
+                            </div>
+                            <div class="setting-item">
+                                <label>Betűméret (px)</label>
+                                <input type="number" id="setting-font-size" value="14" min="10" max="24">
+                            </div>
+                        </div>
+                    </div>
+
+                    <div class="settings-actions">
+                        <button class="btn btn-secondary" id="reset-settings">
+                            <i class="fas fa-undo"></i> Alapértelmezés
+                        </button>
+                        <button class="btn btn-primary" id="save-settings">
+                            <i class="fas fa-save"></i> Mentés
+                        </button>
+                    </div>
+
+                    <div class="settings-section">
+                        <h3><i class="fas fa-database"></i> Adatok</h3>
+                        <div class="settings-grid">
+                            <div class="setting-item">
+                                <button class="btn btn-secondary" id="export-json">
+                                    <i class="fas fa-download"></i> JSON Export
+                                </button>
+                            </div>
+                            <div class="setting-item">
+                                <button class="btn btn-secondary" id="import-json">
+                                    <i class="fas fa-upload"></i> JSON Import
+                                </button>
+                                <input type="file" id="import-file" accept=".json" style="display:none;">
+                            </div>
+                            <div class="setting-item">
+                                <button class="btn btn-secondary" id="export-gedcom-btn">
+                                    <i class="fas fa-file-export"></i> GEDCOM Export
+                                </button>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </main>
+
+        <!-- Személy modal -->
+        <div id="person-modal" class="modal">
+            <div class="modal-content large">
+                <div class="modal-header">
+                    <h2 id="modal-title">Új személy hozzáadása</h2>
+                    <button class="close-btn">&times;</button>
+                </div>
+                <div class="modal-body">
+                    <form id="person-form">
+                        <input type="hidden" id="person-id">
+                        
+                        <!-- Tabok -->
+                        <div class="form-tabs">
+                            <button type="button" class="tab-btn active" data-tab="basic">Alapadatok</button>
+                            <button type="button" class="tab-btn" data-tab="birth">Születés</button>
+                            <button type="button" class="tab-btn" data-tab="death">Halálozás</button>
+                            <button type="button" class="tab-btn" data-tab="life">Életrajz</button>
+                            <button type="button" class="tab-btn" data-tab="relations">Kapcsolatok</button>
+                            <button type="button" class="tab-btn" data-tab="media">Média</button>
+                        </div>
+
+                        <!-- Alapadatok tab -->
+                        <div class="tab-content active" id="tab-basic">
+                            <div class="form-row">
+                                <div class="form-group">
+                                    <label for="first_name">Keresztnév *</label>
+                                    <input type="text" id="first_name" name="first_name" required>
+                                </div>
+                                <div class="form-group">
+                                    <label for="middle_name">Középső név</label>
+                                    <input type="text" id="middle_name" name="middle_name">
+                                </div>
+                                <div class="form-group">
+                                    <label for="last_name">Vezetéknév *</label>
+                                    <input type="text" id="last_name" name="last_name" required>
+                                </div>
+                            </div>
+                            <div class="form-row">
+                                <div class="form-group">
+                                    <label for="maiden_name">Leánykori név</label>
+                                    <input type="text" id="maiden_name" name="maiden_name">
+                                </div>
+                                <div class="form-group">
+                                    <label for="nickname">Becenév</label>
+                                    <input type="text" id="nickname" name="nickname">
+                                </div>
+                                <div class="form-group">
+                                    <label for="gender">Nem</label>
+                                    <select id="gender" name="gender">
+                                        <option value="unknown">Ismeretlen</option>
+                                        <option value="male">Férfi</option>
+                                        <option value="female">Nő</option>
+                                    </select>
+                                </div>
+                            </div>
+                        </div>
+
+                        <!-- Születési adatok tab -->
+                        <div class="tab-content" id="tab-birth">
+                            <div class="form-row">
+                                <div class="form-group">
+                                    <label for="birth_date">Születési dátum</label>
+                                    <input type="date" id="birth_date" name="birth_date">
+                                </div>
+                                <div class="form-group checkbox-inline">
+                                    <input type="checkbox" id="birth_date_approximate" name="birth_date_approximate">
+                                    <label for="birth_date_approximate">Becsült dátum</label>
+                                </div>
+                            </div>
+                            <div class="form-row">
+                                <div class="form-group">
+                                    <label for="birth_place">Születési hely</label>
+                                    <input type="text" id="birth_place" name="birth_place">
+                                </div>
+                                <div class="form-group">
+                                    <label for="birth_country">Ország</label>
+                                    <input type="text" id="birth_country" name="birth_country">
+                                </div>
+                            </div>
+                        </div>
+
+                        <!-- Halálozási adatok tab -->
+                        <div class="tab-content" id="tab-death">
+                            <div class="form-row">
+                                <div class="form-group">
+                                    <label for="death_date">Halálozási dátum</label>
+                                    <input type="date" id="death_date" name="death_date">
+                                </div>
+                                <div class="form-group checkbox-inline">
+                                    <input type="checkbox" id="death_date_approximate" name="death_date_approximate">
+                                    <label for="death_date_approximate">Becsült dátum</label>
+                                </div>
+                            </div>
+                            <div class="form-row">
+                                <div class="form-group">
+                                    <label for="death_place">Halálozási hely</label>
+                                    <input type="text" id="death_place" name="death_place">
+                                </div>
+                                <div class="form-group">
+                                    <label for="death_country">Ország</label>
+                                    <input type="text" id="death_country" name="death_country">
+                                </div>
+                            </div>
+                            <div class="form-row">
+                                <div class="form-group full-width">
+                                    <label for="death_cause">Halál oka</label>
+                                    <input type="text" id="death_cause" name="death_cause">
+                                </div>
+                            </div>
+                            <div class="form-row">
+                                <div class="form-group full-width">
+                                    <label for="burial_place">Temetkezési hely</label>
+                                    <input type="text" id="burial_place" name="burial_place">
+                                </div>
+                            </div>
+                        </div>
+
+                        <!-- Életrajzi adatok tab -->
+                        <div class="tab-content" id="tab-life">
+                            <div class="form-row">
+                                <div class="form-group">
+                                    <label for="occupation">Foglalkozás</label>
+                                    <input type="text" id="occupation" name="occupation">
+                                </div>
+                                <div class="form-group">
+                                    <label for="education">Iskolai végzettség</label>
+                                    <input type="text" id="education" name="education">
+                                </div>
+                            </div>
+                            <div class="form-row">
+                                <div class="form-group">
+                                    <label for="religion">Vallás</label>
+                                    <input type="text" id="religion" name="religion">
+                                </div>
+                                <div class="form-group">
+                                    <label for="nationality">Nemzetiség</label>
+                                    <input type="text" id="nationality" name="nationality">
+                                </div>
+                            </div>
+                            <div class="form-row">
+                                <div class="form-group">
+                                    <label for="email">Email</label>
+                                    <input type="email" id="email" name="email">
+                                </div>
+                                <div class="form-group">
+                                    <label for="phone">Telefon</label>
+                                    <input type="tel" id="phone" name="phone">
+                                </div>
+                            </div>
+                            <div class="form-row">
+                                <div class="form-group full-width">
+                                    <label for="address">Cím</label>
+                                    <input type="text" id="address" name="address">
+                                </div>
+                            </div>
+                            <div class="form-row">
+                                <div class="form-group full-width">
+                                    <label for="biography">Életrajz</label>
+                                    <textarea id="biography" name="biography" rows="4"></textarea>
+                                </div>
+                            </div>
+                            <div class="form-row">
+                                <div class="form-group full-width">
+                                    <label for="notes">Megjegyzések</label>
+                                    <textarea id="notes" name="notes" rows="3"></textarea>
+                                </div>
+                            </div>
+                        </div>
+
+                        <!-- Kapcsolatok tab -->
+                        <div class="tab-content" id="tab-relations">
+                            <div class="form-row">
+                                <div class="form-group">
+                                    <label for="father_id">Apa</label>
+                                    <select id="father_id" name="father_id">
+                                        <option value="">-- Válasszon --</option>
+                                    </select>
+                                </div>
+                                <div class="form-group">
+                                    <label for="mother_id">Anya</label>
+                                    <select id="mother_id" name="mother_id">
+                                        <option value="">-- Válasszon --</option>
+                                    </select>
+                                </div>
+                            </div>
+                            
+                            <div class="relations-section">
+                                <h4>Házasságok / Partnerkapcsolatok</h4>
+                                <div id="marriages-list"></div>
+                                <button type="button" class="btn btn-secondary btn-sm" id="add-marriage-btn">
+                                    <i class="fas fa-plus"></i> Új kapcsolat
+                                </button>
+                            </div>
+
+                            <div class="relations-section">
+                                <h4>Életesemények</h4>
+                                <div id="events-list"></div>
+                                <button type="button" class="btn btn-secondary btn-sm" id="add-event-btn">
+                                    <i class="fas fa-plus"></i> Új esemény
+                                </button>
+                            </div>
+                        </div>
+
+                        <!-- Média tab -->
+                        <div class="tab-content" id="tab-media">
+                            <div class="photo-upload-area">
+                                <div class="current-photo">
+                                    <img id="preview-photo" src="/static/img/default-avatar.png" alt="Profilkép">
+                                </div>
+                                <div class="upload-controls">
+                                    <input type="file" id="photo-input" accept="image/*" style="display:none;">
+                                    <button type="button" class="btn btn-secondary" id="upload-photo-btn">
+                                        <i class="fas fa-camera"></i> Fénykép feltöltése
+                                    </button>
+                                </div>
+                            </div>
+                            
+                            <div class="documents-section">
+                                <h4>Dokumentumok</h4>
+                                <div id="documents-list"></div>
+                                <div class="upload-controls">
+                                    <input type="file" id="document-input" multiple style="display:none;">
+                                    <button type="button" class="btn btn-secondary" id="upload-document-btn">
+                                        <i class="fas fa-file-upload"></i> Dokumentum feltöltése
+                                    </button>
+                                </div>
+                            </div>
+                        </div>
+                    </form>
+                </div>
+                <div class="modal-footer">
+                    <button type="button" class="btn btn-danger" id="delete-person-btn" style="display:none;">
+                        <i class="fas fa-trash"></i> Törlés
+                    </button>
+                    <div class="footer-right">
+                        <button type="button" class="btn btn-secondary close-modal">Mégse</button>
+                        <button type="button" class="btn btn-primary" id="save-person-btn">
+                            <i class="fas fa-save"></i> Mentés
+                        </button>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Házasság modal -->
+        <div id="marriage-modal" class="modal">
+            <div class="modal-content">
+                <div class="modal-header">
+                    <h2>Házasság / Partnerkapcsolat</h2>
+                    <button class="close-btn">&times;</button>
+                </div>
+                <div class="modal-body">
+                    <form id="marriage-form">
+                        <input type="hidden" id="marriage-id">
+                        <input type="hidden" id="marriage-person1-id">
+                        
+                        <div class="form-group">
+                            <label for="marriage-person2">Partner</label>
+                            <select id="marriage-person2" required>
+                                <option value="">-- Válasszon --</option>
+                            </select>
+                        </div>
+                        <div class="form-group">
+                            <label for="marriage-type">Kapcsolat típusa</label>
+                            <select id="marriage-type">
+                                <option value="marriage">Házasság</option>
+                                <option value="partnership">Élettársi kapcsolat</option>
+                                <option value="engagement">Eljegyzés</option>
+                            </select>
+                        </div>
+                        <div class="form-row">
+                            <div class="form-group">
+                                <label for="marriage-start">Kezdés dátuma</label>
+                                <input type="date" id="marriage-start">
+                            </div>
+                            <div class="form-group">
+                                <label for="marriage-end">Befejezés dátuma</label>
+                                <input type="date" id="marriage-end">
+                            </div>
+                        </div>
+                        <div class="form-group">
+                            <label for="marriage-place">Helyszín</label>
+                            <input type="text" id="marriage-place">
+                        </div>
+                        <div class="form-group">
+                            <label for="marriage-end-reason">Befejezés oka</label>
+                            <select id="marriage-end-reason">
+                                <option value="">-- Aktív --</option>
+                                <option value="divorce">Válás</option>
+                                <option value="death">Haláleset</option>
+                                <option value="annulment">Érvénytelenítés</option>
+                            </select>
+                        </div>
+                        <div class="form-group">
+                            <label for="marriage-notes">Megjegyzések</label>
+                            <textarea id="marriage-notes" rows="2"></textarea>
+                        </div>
+                    </form>
+                </div>
+                <div class="modal-footer">
+                    <button type="button" class="btn btn-secondary close-modal">Mégse</button>
+                    <button type="button" class="btn btn-primary" id="save-marriage-btn">Mentés</button>
+                </div>
+            </div>
+        </div>
+
+        <!-- Esemény modal -->
+        <div id="event-modal" class="modal">
+            <div class="modal-content">
+                <div class="modal-header">
+                    <h2>Életesemény</h2>
+                    <button class="close-btn">&times;</button>
+                </div>
+                <div class="modal-body">
+                    <form id="event-form">
+                        <input type="hidden" id="event-id">
+                        <input type="hidden" id="event-person-id">
+                        
+                        <div class="form-group">
+                            <label for="event-type">Esemény típusa</label>
+                            <select id="event-type" required>
+                                <option value="baptism">Keresztelő</option>
+                                <option value="confirmation">Konfirmáció/Bérmálás</option>
+                                <option value="graduation">Diplomázás</option>
+                                <option value="military">Katonai szolgálat</option>
+                                <option value="immigration">Kivándorlás</option>
+                                <option value="emigration">Bevándorlás</option>
+                                <option value="retirement">Nyugdíjazás</option>
+                                <option value="award">Kitüntetés</option>
+                                <option value="other">Egyéb</option>
+                            </select>
+                        </div>
+                        <div class="form-group">
+                            <label for="event-date">Dátum</label>
+                            <input type="date" id="event-date">
+                        </div>
+                        <div class="form-group">
+                            <label for="event-place">Helyszín</label>
+                            <input type="text" id="event-place">
+                        </div>
+                        <div class="form-group">
+                            <label for="event-description">Leírás</label>
+                            <textarea id="event-description" rows="3"></textarea>
+                        </div>
+                    </form>
+                </div>
+                <div class="modal-footer">
+                    <button type="button" class="btn btn-secondary close-modal">Mégse</button>
+                    <button type="button" class="btn btn-primary" id="save-event-btn">Mentés</button>
+                </div>
+            </div>
+        </div>
+
+        <!-- Megerősítő modal -->
+        <div id="confirm-modal" class="modal">
+            <div class="modal-content small">
+                <div class="modal-header">
+                    <h2>Megerősítés</h2>
+                    <button class="close-btn">&times;</button>
+                </div>
+                <div class="modal-body">
+                    <p id="confirm-message"></p>
+                </div>
+                <div class="modal-footer">
+                    <button type="button" class="btn btn-secondary close-modal">Mégse</button>
+                    <button type="button" class="btn btn-danger" id="confirm-btn">Törlés</button>
+                </div>
+            </div>
+        </div>
+
+        <!-- Értesítések -->
+        <div id="notifications"></div>
+    </div>
+
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/d3/7.8.5/d3.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.0/chart.umd.min.js"></script>
+    <script src="/static/js/app.js"></script>
+    <script src="/static/js/tree.js"></script>
+</body>
+</html>
