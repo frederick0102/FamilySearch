@@ -6,6 +6,7 @@
     <title>Családfakutató - FamilySearch</title>
     <link rel="stylesheet" href="/static/css/style.css">
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/flatpickr/dist/flatpickr.min.css">
 </head>
 <body>
     <div id="app">
@@ -21,6 +22,9 @@
                 </button>
                 <button class="nav-btn" data-view="persons">
                     <i class="fas fa-users"></i> Személyek
+                </button>
+                <button class="nav-btn" data-view="trash">
+                    <i class="fas fa-trash-restore"></i> Lomtár
                 </button>
                 <button class="nav-btn" data-view="stats">
                     <i class="fas fa-chart-bar"></i> Statisztika
@@ -110,6 +114,21 @@
                     </div>
                 </div>
                 <div id="persons-grid" class="persons-grid"></div>
+            </div>
+
+            <!-- Lomtár nézet -->
+            <div id="trash-view" class="view">
+                <div class="trash-header">
+                    <div>
+                        <h2>Lomtár</h2>
+                        <p>Innen visszaállíthatod a törölt elemeket. A törlés csak itt távolítható el véglegesen adatbázis művelettel.</p>
+                    </div>
+                    <div class="trash-hint">
+                        <i class="fas fa-undo"></i>
+                        <span>Visszaállítás után az elem ismét megjelenik a listákban és a fában.</span>
+                    </div>
+                </div>
+                <div id="trash-list" class="trash-list"></div>
             </div>
 
             <!-- Statisztikák nézet -->
@@ -311,16 +330,12 @@
                         <div class="tab-content active" id="tab-basic">
                             <div class="form-row">
                                 <div class="form-group">
-                                    <label for="first_name">Keresztnév *</label>
-                                    <input type="text" id="first_name" name="first_name" required>
-                                </div>
-                                <div class="form-group">
-                                    <label for="middle_name">Középső név</label>
-                                    <input type="text" id="middle_name" name="middle_name">
-                                </div>
-                                <div class="form-group">
                                     <label for="last_name">Vezetéknév *</label>
                                     <input type="text" id="last_name" name="last_name" required>
+                                </div>
+                                <div class="form-group">
+                                    <label for="first_name">Keresztnév *</label>
+                                    <input type="text" id="first_name" name="first_name" required>
                                 </div>
                             </div>
                             <div class="form-row">
@@ -333,11 +348,12 @@
                                     <input type="text" id="nickname" name="nickname">
                                 </div>
                                 <div class="form-group">
-                                    <label for="gender">Nem</label>
-                                    <select id="gender" name="gender">
-                                        <option value="unknown">Ismeretlen</option>
+                                    <label for="gender">Nem *</label>
+                                    <select id="gender" name="gender" required>
+                                        <option value="" selected disabled>-- Válasszon --</option>
                                         <option value="male">Férfi</option>
                                         <option value="female">Nő</option>
+                                        <option value="unknown">Ismeretlen</option>
                                     </select>
                                 </div>
                             </div>
@@ -493,7 +509,7 @@
                         <div class="tab-content" id="tab-media">
                             <div class="photo-upload-area">
                                 <div class="current-photo">
-                                    <img id="preview-photo" src="/static/img/default-avatar.png" alt="Profilkép">
+                                    <img id="preview-photo" src="/static/img/placeholder-avatar.svg" alt="Profilkép">
                                 </div>
                                 <div class="upload-controls">
                                     <input type="file" id="photo-input" accept="image/*" style="display:none;">
@@ -662,6 +678,8 @@
 
     <script src="https://cdnjs.cloudflare.com/ajax/libs/d3/7.8.5/d3.min.js"></script>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.0/chart.umd.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/flatpickr"></script>
+    <script src="https://cdn.jsdelivr.net/npm/flatpickr/dist/l10n/hu.js"></script>
     <script src="/static/js/app.js"></script>
     <script src="/static/js/tree.js"></script>
 </body>

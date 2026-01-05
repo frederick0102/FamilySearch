@@ -66,14 +66,15 @@ class Person(db.Model):
     
     @property
     def full_name(self):
-        parts = [self.first_name]
+        # Magyar sorrend: vezetéknév + keresztnév (+ középső név)
+        parts = [self.last_name, self.first_name]
         if self.middle_name:
             parts.append(self.middle_name)
-        parts.append(self.last_name)
         return ' '.join(parts)
     
     @property
     def display_name(self):
+        # Alap a magyar sorrendű teljes név
         name = self.full_name
         if self.maiden_name:
             name += f' (szül. {self.maiden_name})'
@@ -302,4 +303,22 @@ class TreeSettings(db.Model):
             'background_image': self.background_image,
             'font_family': self.font_family,
             'font_size': self.font_size
+        }
+
+
+class DeletedRecord(db.Model):
+    """Soft delete jelölések: entitás típus + azonosító + törlés ideje"""
+    __tablename__ = 'deleted_records'
+
+    id = db.Column(db.Integer, primary_key=True)
+    entity_type = db.Column(db.String(50), nullable=False)
+    entity_id = db.Column(db.Integer, nullable=False)
+    deleted_at = db.Column(db.DateTime, default=datetime.utcnow)
+
+    def to_dict(self):
+        return {
+            'id': self.id,
+            'entity_type': self.entity_type,
+            'entity_id': self.entity_id,
+            'deleted_at': self.deleted_at.isoformat() if self.deleted_at else None
         }

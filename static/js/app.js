@@ -2,8 +2,12 @@
 let persons = [];
 let marriages = [];
 let events = [];
+let trash = [];
 let settings = {};
 let currentPersonId = null;
+
+// Flatpickr példányok
+let datePickers = {};
 
 // ==================== API HÍVÁSOK ====================
 const API = {
@@ -19,7 +23,14 @@ const API = {
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify(data)
         });
-        if (!response.ok) throw new Error('API hiba');
+        if (!response.ok) {
+            let detail = 'API hiba';
+            try {
+                const err = await response.json();
+                detail = err.error || JSON.stringify(err);
+            } catch (e) {}
+            throw new Error(detail);
+        }
         return response.json();
     },
     
@@ -71,20 +82,37 @@ function initNavigation() {
     const navBtns = document.querySelectorAll('.nav-btn');
     const views = document.querySelectorAll('.view');
     
+    console.log('Navigation init - found buttons:', navBtns.length, 'views:', views.length);
+    
     navBtns.forEach(btn => {
-        btn.addEventListener('click', () => {
+        btn.addEventListener('click', async () => {
             const viewId = btn.dataset.view;
+            console.log('Navigating to:', viewId);
             
             navBtns.forEach(b => b.classList.remove('active'));
             views.forEach(v => v.classList.remove('active'));
             
             btn.classList.add('active');
-            document.getElementById(`${viewId}-view`).classList.add('active');
+            const targetView = document.getElementById(`${viewId}-view`);
+            console.log('Target view:', targetView);
+            
+            if (targetView) {
+                targetView.classList.add('active');
+                console.log('View classes after:', targetView.classList.toString());
+            } else {
+                console.error('View not found:', `${viewId}-view`);
+            }
             
             // Adatok frissítése nézet váltáskor
-            if (viewId === 'persons') loadPersonsList();
-            if (viewId === 'stats') loadStats();
-            if (viewId === 'tree') updateTree();
+            try {
+                if (viewId === 'persons') await loadPersonsList();
+                if (viewId === 'trash') await loadTrash();
+                if (viewId === 'stats') await loadStats();
+                if (viewId === 'tree') updateTree();
+                if (viewId === 'settings') await loadSettings();
+            } catch (error) {
+                console.error('Nézet betöltési hiba:', error);
+            }
         });
     });
 }
@@ -149,7 +177,7 @@ function renderPersonsList() {
     grid.innerHTML = filtered.map(person => `
         <div class="person-card ${person.gender} ${!person.is_alive ? 'deceased' : ''}" 
              onclick="openPersonModal(${person.id})">
-            <img src="${person.photo_path || '/static/img/default-avatar.png'}" 
+              <img src="${person.photo_path || '/static/img/placeholder-avatar.svg'}" 
                  alt="${person.full_name}" class="person-photo">
             <div class="person-info">
                 <h3>${person.display_name}</h3>
@@ -166,6 +194,118 @@ function renderPersonsList() {
             </div>
         </div>
     `).join('');
+}
+
+// ==================== LOMTÁR ====================
+async function loadTrash() {
+    try {
+        trash = await API.get('/trash');
+        renderTrash();
+    } catch (error) {
+        showNotification('Hiba a lomtár betöltésekor', 'error');
+    }
+}
+
+function renderTrash() {
+    const container = document.getElementById('trash-list');
+    if (!container) return;
+
+    if (!trash.length) {
+        container.innerHTML = `
+            <div class="empty-state">
+                <i class="fas fa-trash-restore"></i>
+                <h3>A lomtár üres</h3>
+                <p>A törölt elemek itt jelennek meg, és innen állíthatók vissza.</p>
+            </div>
+        `;
+        return;
+    }
+
+    container.innerHTML = trash.map(item => {
+        const label = getEntityLabel(item.entity_type);
+        const title = getTrashTitle(item);
+        const deletedAt = item.deleted_at ? new Date(item.deleted_at + 'Z').toLocaleString('hu-HU') : 'Ismeretlen időpont';
+        return `
+            <div class="trash-card">
+                <div class="trash-info">
+                    <div class="trash-entity">
+                        <span class="badge">${label}</span>
+                        <span>#${item.entity_id}</span>
+                    </div>
+                    <div class="trash-title">${title}</div>
+                    <div class="trash-meta">Törölve: ${deletedAt}</div>
+                </div>
+                <div class="trash-actions">
+                    <button class="btn btn-secondary" onclick="restoreItem('${item.entity_type}', ${item.entity_id})">
+                        <i class="fas fa-undo"></i> Visszaállítás
+                    </button>
+                    <button class="btn btn-danger" onclick="deletePermanently('${item.entity_type}', ${item.entity_id})">
+                        <i class="fas fa-trash"></i> Végleges törlés
+                    </button>
+                </div>
+            </div>
+        `;
+    }).join('');
+}
+
+function getTrashTitle(item) {
+    const data = item.data || {};
+    switch (item.entity_type) {
+        case 'person':
+            return data.display_name || data.full_name || 'Ismeretlen személy';
+        case 'marriage':
+            return `${data.person1_name || 'Partner 1'} – ${data.person2_name || 'Partner 2'}`;
+        case 'event':
+            return `${getEventTypeName(data.event_type) || 'Esemény'}${data.event_date ? ' • ' + formatDate(data.event_date) : ''}`;
+        case 'document':
+            return data.title || 'Dokumentum';
+        default:
+            return `${item.entity_type} #${item.entity_id}`;
+    }
+}
+
+function getEntityLabel(type) {
+    const labels = {
+        'person': 'Személy',
+        'marriage': 'Kapcsolat',
+        'event': 'Esemény',
+        'document': 'Dokumentum'
+    };
+    return labels[type] || type;
+}
+
+async function restoreItem(entityType, entityId) {
+    showConfirm('Biztosan visszaállítod ezt az elemet?', async () => {
+        try {
+            await API.post('/trash/restore', { entity_type: entityType, entity_id: entityId });
+            showNotification('Elem visszaállítva', 'success');
+            await loadTrash();
+            persons = await API.get('/persons');
+            renderPersonsList();
+            updateRootPersonSelector();
+            updateTree();
+            await loadStats();
+        } catch (error) {
+            showNotification('Hiba a visszaállítás során', 'error');
+        }
+    }, { text: 'Visszaállítás', className: 'btn-success' });
+}
+
+async function deletePermanently(entityType, entityId) {
+    showConfirm('⚠️ FIGYELEM: Ez véglegesen törli az elemet az adatbázisból! Ez a művelet NEM visszavonható. Biztosan folytatod?', async () => {
+        try {
+            await API.post('/trash/delete', { entity_type: entityType, entity_id: entityId });
+            showNotification('Elem véglegesen törölve', 'success');
+            await loadTrash();
+            persons = await API.get('/persons');
+            renderPersonsList();
+            updateRootPersonSelector();
+            updateTree();
+            await loadStats();
+        } catch (error) {
+            showNotification('Hiba a törlés során', 'error');
+        }
+    });
 }
 
 // ==================== SZEMÉLY MODAL ====================
@@ -197,7 +337,7 @@ async function openPersonModal(personId = null) {
     } else {
         title.textContent = 'Új személy hozzáadása';
         deleteBtn.style.display = 'none';
-        document.getElementById('preview-photo').src = '/static/img/default-avatar.png';
+        document.getElementById('preview-photo').src = '/static/img/placeholder-avatar.svg';
         document.getElementById('marriages-list').innerHTML = '';
         document.getElementById('events-list').innerHTML = '';
         document.getElementById('documents-list').innerHTML = '';
@@ -215,16 +355,22 @@ async function openPersonModal(personId = null) {
 function fillPersonForm(person) {
     document.getElementById('person-id').value = person.id;
     document.getElementById('first_name').value = person.first_name || '';
-    document.getElementById('middle_name').value = person.middle_name || '';
     document.getElementById('last_name').value = person.last_name || '';
     document.getElementById('maiden_name').value = person.maiden_name || '';
     document.getElementById('nickname').value = person.nickname || '';
     document.getElementById('gender').value = person.gender || 'unknown';
-    document.getElementById('birth_date').value = person.birth_date || '';
+    
+    // Dátumok beállítása flatpickr segítségével
+    if (datePickers.birthDate) {
+        datePickers.birthDate.setDate(person.birth_date || null);
+    }
+    if (datePickers.deathDate) {
+        datePickers.deathDate.setDate(person.death_date || null);
+    }
+    
     document.getElementById('birth_date_approximate').checked = person.birth_date_approximate;
     document.getElementById('birth_place').value = person.birth_place || '';
     document.getElementById('birth_country').value = person.birth_country || '';
-    document.getElementById('death_date').value = person.death_date || '';
     document.getElementById('death_date_approximate').checked = person.death_date_approximate;
     document.getElementById('death_place').value = person.death_place || '';
     document.getElementById('death_country').value = person.death_country || '';
@@ -241,28 +387,35 @@ function fillPersonForm(person) {
     document.getElementById('notes').value = person.notes || '';
     document.getElementById('father_id').value = person.father_id || '';
     document.getElementById('mother_id').value = person.mother_id || '';
-    document.getElementById('preview-photo').src = person.photo_path || '/static/img/default-avatar.png';
+    document.getElementById('preview-photo').src = person.photo_path || '/static/img/placeholder-avatar.svg';
 }
 
 async function populateParentSelectors() {
     const fatherSelect = document.getElementById('father_id');
     const motherSelect = document.getElementById('mother_id');
-    
-    if (persons.length === 0) {
-        persons = await API.get('/persons');
-    }
-    
-    const males = persons.filter(p => p.gender === 'male');
-    const females = persons.filter(p => p.gender === 'female');
-    
-    fatherSelect.innerHTML = '<option value="">-- Válasszon --</option>' +
-        males.map(p => `<option value="${p.id}">${p.full_name}</option>`).join('');
-    
-    motherSelect.innerHTML = '<option value="">-- Válasszon --</option>' +
-        females.map(p => `<option value="${p.id}">${p.full_name}</option>`).join('');
+
+    // Mindig friss adatokat kérünk, hogy a legutóbb felvitt személyek is megjelenjenek
+    persons = await API.get('/persons');
+
+    // Ne lehessen saját magát szülőnek kiválasztani
+    const options = persons
+        .filter(p => !currentPersonId || p.id !== currentPersonId)
+        .map(p => {
+            const genderLabel = p.gender === 'male' ? 'F' : p.gender === 'female' ? 'N' : '?';
+            return `<option value="${p.id}">${p.display_name || p.full_name} (${genderLabel})</option>`;
+        })
+        .join('');
+
+    const defaultOption = '<option value="">-- Válasszon --</option>';
+    fatherSelect.innerHTML = defaultOption + options;
+    motherSelect.innerHTML = defaultOption + options;
 }
 
 async function loadPersonRelations(personId) {
+    if (persons.length === 0) {
+        persons = await API.get('/persons');
+    }
+
     // Házasságok betöltése
     marriages = await API.get('/marriages');
     const personMarriages = marriages.filter(m => m.person1_id === personId || m.person2_id === personId);
@@ -270,7 +423,10 @@ async function loadPersonRelations(personId) {
     const marriagesList = document.getElementById('marriages-list');
     marriagesList.innerHTML = personMarriages.map(m => {
         const partnerId = m.person1_id === personId ? m.person2_id : m.person1_id;
-        const partnerName = m.person1_id === personId ? m.person2_name : m.person1_name;
+        const partner = persons.find(p => p.id === partnerId);
+        const partnerName = (partner && (partner.display_name || partner.full_name)) ||
+            (m.person1_id === personId ? m.person2_name : m.person1_name) ||
+            'Ismeretlen partner';
         return `
             <div class="relation-item">
                 <div class="info">
@@ -333,7 +489,6 @@ async function savePerson() {
     
     const data = {
         first_name: formData.get('first_name'),
-        middle_name: formData.get('middle_name'),
         last_name: formData.get('last_name'),
         maiden_name: formData.get('maiden_name'),
         nickname: formData.get('nickname'),
@@ -360,6 +515,11 @@ async function savePerson() {
         father_id: formData.get('father_id') || null,
         mother_id: formData.get('mother_id') || null
     };
+
+    if (!data.gender) {
+        showNotification('Válaszd ki a nemet.', 'warning');
+        return;
+    }
     
     try {
         if (currentPersonId) {
@@ -393,6 +553,7 @@ async function deletePerson() {
             renderPersonsList();
             updateRootPersonSelector();
             updateTree();
+            await loadTrash();
         } catch (error) {
             showNotification('Hiba a törlés során', 'error');
         }
@@ -403,24 +564,52 @@ async function deletePerson() {
 function openMarriageModal(personId = null) {
     const modal = document.getElementById('marriage-modal');
     const form = document.getElementById('marriage-form');
-    
+
+    // Ha nincs elmentett aktuális személy, ne engedjük
+    if (!currentPersonId) {
+        showNotification('Először mentsd a személyt, utána adhatsz hozzá kapcsolatot.', 'warning');
+        return;
+    }
+
+    // Ha még nincs másik személy az adatbázisban, jelezzük
+    const otherPersons = persons.filter(p => p.id !== currentPersonId);
+    if (otherPersons.length === 0) {
+        showNotification('Nincs másik személy a rendszerben. Vidd fel a partnert, majd próbáld újra.', 'info');
+        return;
+    }
+
     form.reset();
     document.getElementById('marriage-person1-id').value = currentPersonId;
+    document.getElementById('marriage-id').value = '';
     
     // Partner választó feltöltése
     const partnerSelect = document.getElementById('marriage-person2');
     partnerSelect.innerHTML = '<option value="">-- Válasszon --</option>' +
-        persons.filter(p => p.id !== currentPersonId)
-            .map(p => `<option value="${p.id}">${p.full_name}</option>`)
-            .join('');
+        otherPersons.map(p => `<option value="${p.id}">${p.display_name || p.full_name}</option>`).join('');
     
     modal.classList.add('show');
 }
 
 async function saveMarriage() {
+    const p1 = parseInt(document.getElementById('marriage-person1-id').value);
+    const p2 = parseInt(document.getElementById('marriage-person2').value);
+
+    if (!p1) {
+        showNotification('Először mentsd a személyt, utána adhatsz hozzá kapcsolatot.', 'warning');
+        return;
+    }
+    if (!p2) {
+        showNotification('Válassz partnert a listából.', 'warning');
+        return;
+    }
+    if (p1 === p2) {
+        showNotification('A két partner nem lehet azonos személy.', 'warning');
+        return;
+    }
+
     const data = {
-        person1_id: parseInt(document.getElementById('marriage-person1-id').value),
-        person2_id: parseInt(document.getElementById('marriage-person2').value),
+        person1_id: p1,
+        person2_id: p2,
         relationship_type: document.getElementById('marriage-type').value,
         start_date: document.getElementById('marriage-start').value || null,
         end_date: document.getElementById('marriage-end').value || null,
@@ -442,7 +631,7 @@ async function saveMarriage() {
         await loadPersonRelations(currentPersonId);
         updateTree();
     } catch (error) {
-        showNotification('Hiba a mentés során', 'error');
+        showNotification(`Hiba a mentés során: ${error.message}`, 'error');
     }
 }
 
@@ -453,6 +642,7 @@ async function deleteMarriage(marriageId) {
             showNotification('Kapcsolat törölve', 'success');
             await loadPersonRelations(currentPersonId);
             updateTree();
+            await loadTrash();
         } catch (error) {
             showNotification('Hiba a törlés során', 'error');
         }
@@ -495,6 +685,7 @@ async function deleteEvent(eventId) {
             await API.delete(`/events/${eventId}`);
             showNotification('Esemény törölve', 'success');
             await loadPersonRelations(currentPersonId);
+            await loadTrash();
         } catch (error) {
             showNotification('Hiba a törlés során', 'error');
         }
@@ -524,6 +715,7 @@ async function deleteDocument(documentId) {
             await API.delete(`/documents/${documentId}`);
             showNotification('Dokumentum törölve', 'success');
             await loadPersonRelations(currentPersonId);
+            await loadTrash();
         } catch (error) {
             showNotification('Hiba a törlés során', 'error');
         }
@@ -657,27 +849,40 @@ async function loadSettings() {
 }
 
 function applySettings() {
-    document.getElementById('setting-male-color').value = settings.male_color || '#4A90D9';
-    document.getElementById('setting-female-color').value = settings.female_color || '#D94A8C';
-    document.getElementById('setting-unknown-color').value = settings.unknown_color || '#808080';
-    document.getElementById('setting-line-color').value = settings.line_color || '#666666';
-    document.getElementById('setting-bg-color').value = settings.background_color || '#F5F5F5';
-    document.getElementById('setting-deceased-opacity').value = settings.deceased_opacity || 0.7;
-    document.getElementById('setting-card-width').value = settings.card_width || 200;
-    document.getElementById('setting-card-height').value = settings.card_height || 100;
-    document.getElementById('setting-border-radius').value = settings.card_border_radius || 8;
-    document.getElementById('setting-line-width').value = settings.line_width || 2;
-    document.getElementById('setting-show-photos').checked = settings.show_photos !== false;
-    document.getElementById('setting-show-dates').checked = settings.show_dates !== false;
-    document.getElementById('setting-show-places').checked = settings.show_places || false;
-    document.getElementById('setting-show-occupation').checked = settings.show_occupation || false;
-    document.getElementById('setting-font-family').value = settings.font_family || 'Arial, sans-serif';
-    document.getElementById('setting-font-size').value = settings.font_size || 14;
-    
-    // CSS változók frissítése
-    document.documentElement.style.setProperty('--male-color', settings.male_color || '#4A90D9');
-    document.documentElement.style.setProperty('--female-color', settings.female_color || '#D94A8C');
-    document.documentElement.style.setProperty('--unknown-color', settings.unknown_color || '#808080');
+    try {
+        const setVal = (id, val) => {
+            const el = document.getElementById(id);
+            if (el) el.value = val;
+        };
+        const setChecked = (id, val) => {
+            const el = document.getElementById(id);
+            if (el) el.checked = val;
+        };
+        
+        setVal('setting-male-color', settings.male_color || '#4A90D9');
+        setVal('setting-female-color', settings.female_color || '#D94A8C');
+        setVal('setting-unknown-color', settings.unknown_color || '#808080');
+        setVal('setting-line-color', settings.line_color || '#666666');
+        setVal('setting-bg-color', settings.background_color || '#F5F5F5');
+        setVal('setting-deceased-opacity', settings.deceased_opacity || 0.7);
+        setVal('setting-card-width', settings.card_width || 200);
+        setVal('setting-card-height', settings.card_height || 100);
+        setVal('setting-border-radius', settings.card_border_radius || 8);
+        setVal('setting-line-width', settings.line_width || 2);
+        setChecked('setting-show-photos', settings.show_photos !== false);
+        setChecked('setting-show-dates', settings.show_dates !== false);
+        setChecked('setting-show-places', settings.show_places || false);
+        setChecked('setting-show-occupation', settings.show_occupation || false);
+        setVal('setting-font-family', settings.font_family || 'Arial, sans-serif');
+        setVal('setting-font-size', settings.font_size || 14);
+        
+        // CSS változók frissítése
+        document.documentElement.style.setProperty('--male-color', settings.male_color || '#4A90D9');
+        document.documentElement.style.setProperty('--female-color', settings.female_color || '#D94A8C');
+        document.documentElement.style.setProperty('--unknown-color', settings.unknown_color || '#808080');
+    } catch (error) {
+        console.error('Beállítások alkalmazási hiba:', error);
+    }
 }
 
 async function saveSettings() {
@@ -811,13 +1016,22 @@ function closeModal(modalId) {
     document.getElementById(modalId).classList.remove('show');
 }
 
-function showConfirm(message, onConfirm) {
+function showConfirm(message, onConfirm, buttonConfig = null) {
     const modal = document.getElementById('confirm-modal');
     document.getElementById('confirm-message').textContent = message;
     
     const confirmBtn = document.getElementById('confirm-btn');
     const newConfirmBtn = confirmBtn.cloneNode(true);
     confirmBtn.parentNode.replaceChild(newConfirmBtn, confirmBtn);
+    
+    // Gomb testreszabása
+    if (buttonConfig) {
+        newConfirmBtn.textContent = buttonConfig.text || 'Megerősítés';
+        newConfirmBtn.className = `btn ${buttonConfig.className || 'btn-primary'}`;
+    } else {
+        newConfirmBtn.textContent = 'Törlés';
+        newConfirmBtn.className = 'btn btn-danger';
+    }
     
     newConfirmBtn.addEventListener('click', () => {
         closeModal('confirm-modal');
@@ -906,12 +1120,39 @@ function updateRootPersonSelector() {
 }
 
 // ==================== INICIALIZÁLÁS ====================
+function initDatePickers() {
+    // Flatpickr beállítások magyar lokalizációval
+    const dateConfig = {
+        locale: 'hu',
+        dateFormat: 'Y-m-d',
+        allowInput: true,
+        altInput: true,
+        altFormat: 'Y. m. d.',
+        monthSelectorType: 'static',
+        prevArrow: '<i class="fas fa-chevron-left"></i>',
+        nextArrow: '<i class="fas fa-chevron-right"></i>',
+        showMonths: 1
+    };
+
+    // Személy űrlap dátumok - példányok mentése
+    datePickers.birthDate = flatpickr('#birth_date', dateConfig);
+    datePickers.deathDate = flatpickr('#death_date', dateConfig);
+    
+    // Házasság űrlap dátumok
+    datePickers.marriageStart = flatpickr('#marriage-start', dateConfig);
+    datePickers.marriageEnd = flatpickr('#marriage-end', dateConfig);
+    
+    // Esemény űrlap dátum
+    datePickers.eventDate = flatpickr('#event-date', dateConfig);
+}
+
 document.addEventListener('DOMContentLoaded', async () => {
     initNavigation();
     initModals();
     initTabs();
     initFilters();
     initSearch();
+    initDatePickers();
     
     // Adatok betöltése
     await loadSettings();

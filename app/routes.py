@@ -1,7 +1,8 @@
 from flask import Blueprint, render_template, request, jsonify, current_app
 from werkzeug.utils import secure_filename
 from app import db
-from app.models import Person, Marriage, Event, Document, TreeSettings
+from app.models import Person, Marriage, Event, Document, TreeSettings, DeletedRecord
+from sqlalchemy import exists
 import os
 import json
 from datetime import datetime
@@ -12,6 +13,19 @@ api_bp = Blueprint('api', __name__)
 
 # Megengedett fájltípusok
 ALLOWED_EXTENSIONS = {'png', 'jpg', 'jpeg', 'gif', 'pdf', 'doc', 'docx'}
+
+# Soft delete helper
+def not_deleted_filter(model, entity_type):
+    return ~exists().where((DeletedRecord.entity_type == entity_type) & (DeletedRecord.entity_id == model.id))
+
+def mark_deleted(entity_type, entity_id):
+    # Ha már jelölve, ne duplikáljuk
+    existing = DeletedRecord.query.filter_by(entity_type=entity_type, entity_id=entity_id).first()
+    if existing:
+        return existing
+    rec = DeletedRecord(entity_type=entity_type, entity_id=entity_id)
+    db.session.add(rec)
+    return rec
 
 def allowed_file(filename):
     return '.' in filename and filename.rsplit('.', 1)[1].lower() in ALLOWED_EXTENSIONS
@@ -29,14 +43,14 @@ def index():
 @api_bp.route('/persons', methods=['GET'])
 def get_persons():
     """Összes személy lekérdezése"""
-    persons = Person.query.all()
+    persons = Person.query.filter(not_deleted_filter(Person, 'person')).all()
     return jsonify([p.to_dict() for p in persons])
 
 
 @api_bp.route('/persons/<int:person_id>', methods=['GET'])
 def get_person(person_id):
     """Egy személy lekérdezése"""
-    person = Person.query.get_or_404(person_id)
+    person = Person.query.filter(not_deleted_filter(Person, 'person'), Person.id == person_id).first_or_404()
     return jsonify(person.to_dict())
 
 
@@ -89,7 +103,7 @@ def create_person():
 @api_bp.route('/persons/<int:person_id>', methods=['PUT'])
 def update_person(person_id):
     """Személy frissítése"""
-    person = Person.query.get_or_404(person_id)
+    person = Person.query.filter(not_deleted_filter(Person, 'person'), Person.id == person_id).first_or_404()
     data = request.get_json()
     
     # Mezők frissítése
@@ -120,19 +134,8 @@ def update_person(person_id):
 def delete_person(person_id):
     """Személy törlése"""
     person = Person.query.get_or_404(person_id)
-    
-    # Kapcsolatok törlése
-    Marriage.query.filter((Marriage.person1_id == person_id) | (Marriage.person2_id == person_id)).delete()
-    Event.query.filter_by(person_id=person_id).delete()
-    Document.query.filter_by(person_id=person_id).delete()
-    
-    # Gyerekek szülő referenciáinak törlése
-    Person.query.filter_by(father_id=person_id).update({'father_id': None})
-    Person.query.filter_by(mother_id=person_id).update({'mother_id': None})
-    
-    db.session.delete(person)
+    mark_deleted('person', person_id)
     db.session.commit()
-    
     return '', 204
 
 
@@ -166,31 +169,57 @@ def upload_photo(person_id):
 @api_bp.route('/marriages', methods=['GET'])
 def get_marriages():
     """Összes házasság lekérdezése"""
-    marriages = Marriage.query.all()
+    marriages = Marriage.query.filter(not_deleted_filter(Marriage, 'marriage')).all()
     return jsonify([m.to_dict() for m in marriages])
 
 
 @api_bp.route('/marriages', methods=['POST'])
 def create_marriage():
     """Új házasság létrehozása"""
-    data = request.get_json()
-    
+    data = request.get_json() or {}
+
+    # Kötelező mezők és validációk
+    try:
+        person1_id = int(data.get('person1_id')) if data.get('person1_id') is not None else None
+        person2_id = int(data.get('person2_id')) if data.get('person2_id') is not None else None
+    except (TypeError, ValueError):
+        return jsonify({'error': 'Érvénytelen partner azonosító'}), 400
+
+    if not person1_id or not person2_id:
+        return jsonify({'error': 'Mindkét partner kötelező'}), 400
+    if person1_id == person2_id:
+        return jsonify({'error': 'A két partner nem lehet azonos személy'}), 400
+
+    person1 = Person.query.get(person1_id)
+    person2 = Person.query.get(person2_id)
+    if not person1 or not person2:
+        return jsonify({'error': 'A megadott partner(ek) nem léteznek'}), 400
+
+    def parse_date(value):
+        if not value:
+            return None
+        try:
+            return datetime.strptime(value, '%Y-%m-%d').date()
+        except ValueError:
+            return None
+
     marriage = Marriage(
-        person1_id=data.get('person1_id'),
-        person2_id=data.get('person2_id'),
+        person1_id=person1_id,
+        person2_id=person2_id,
         relationship_type=data.get('relationship_type', 'marriage'),
         marriage_place=data.get('marriage_place'),
         end_reason=data.get('end_reason'),
-        notes=data.get('notes')
+        notes=data.get('notes'),
+        start_date=parse_date(data.get('start_date')),
+        end_date=parse_date(data.get('end_date'))
     )
-    
-    if data.get('start_date'):
-        marriage.start_date = datetime.strptime(data['start_date'], '%Y-%m-%d').date()
-    if data.get('end_date'):
-        marriage.end_date = datetime.strptime(data['end_date'], '%Y-%m-%d').date()
-    
-    db.session.add(marriage)
-    db.session.commit()
+
+    try:
+        db.session.add(marriage)
+        db.session.commit()
+    except Exception as exc:
+        db.session.rollback()
+        return jsonify({'error': 'Házasság mentési hiba', 'details': str(exc)}), 500
     
     return jsonify(marriage.to_dict()), 201
 
@@ -198,19 +227,46 @@ def create_marriage():
 @api_bp.route('/marriages/<int:marriage_id>', methods=['PUT'])
 def update_marriage(marriage_id):
     """Házasság frissítése"""
-    marriage = Marriage.query.get_or_404(marriage_id)
+    marriage = Marriage.query.filter(not_deleted_filter(Marriage, 'marriage'), Marriage.id == marriage_id).first_or_404()
     data = request.get_json()
     
-    for field in ['person1_id', 'person2_id', 'relationship_type', 'marriage_place', 'end_reason', 'notes']:
+    def parse_date(value):
+        if not value:
+            return None
+        try:
+            return datetime.strptime(value, '%Y-%m-%d').date()
+        except ValueError:
+            return None
+
+    # Partner validáció, ha érkezik
+    if 'person1_id' in data or 'person2_id' in data:
+        try:
+            p1 = int(data.get('person1_id', marriage.person1_id))
+            p2 = int(data.get('person2_id', marriage.person2_id))
+        except (TypeError, ValueError):
+            return jsonify({'error': 'Érvénytelen partner azonosító'}), 400
+
+        if p1 == p2:
+            return jsonify({'error': 'A két partner nem lehet azonos személy'}), 400
+        if not Person.query.get(p1) or not Person.query.get(p2):
+            return jsonify({'error': 'A megadott partner(ek) nem léteznek'}), 400
+        marriage.person1_id = p1
+        marriage.person2_id = p2
+
+    for field in ['relationship_type', 'marriage_place', 'end_reason', 'notes']:
         if field in data:
             setattr(marriage, field, data[field])
     
     if 'start_date' in data:
-        marriage.start_date = datetime.strptime(data['start_date'], '%Y-%m-%d').date() if data['start_date'] else None
+        marriage.start_date = parse_date(data['start_date'])
     if 'end_date' in data:
-        marriage.end_date = datetime.strptime(data['end_date'], '%Y-%m-%d').date() if data['end_date'] else None
+        marriage.end_date = parse_date(data['end_date'])
     
-    db.session.commit()
+    try:
+        db.session.commit()
+    except Exception as exc:
+        db.session.rollback()
+        return jsonify({'error': 'Házasság mentési hiba', 'details': str(exc)}), 500
     
     return jsonify(marriage.to_dict())
 
@@ -218,10 +274,9 @@ def update_marriage(marriage_id):
 @api_bp.route('/marriages/<int:marriage_id>', methods=['DELETE'])
 def delete_marriage(marriage_id):
     """Házasság törlése"""
-    marriage = Marriage.query.get_or_404(marriage_id)
-    db.session.delete(marriage)
+    Marriage.query.get_or_404(marriage_id)
+    mark_deleted('marriage', marriage_id)
     db.session.commit()
-    
     return '', 204
 
 
@@ -232,9 +287,9 @@ def get_events():
     """Összes esemény lekérdezése"""
     person_id = request.args.get('person_id')
     if person_id:
-        events = Event.query.filter_by(person_id=person_id).all()
+        events = Event.query.filter_by(person_id=person_id).filter(not_deleted_filter(Event, 'event')).all()
     else:
-        events = Event.query.all()
+        events = Event.query.filter(not_deleted_filter(Event, 'event')).all()
     return jsonify([e.to_dict() for e in events])
 
 
@@ -262,10 +317,9 @@ def create_event():
 @api_bp.route('/events/<int:event_id>', methods=['DELETE'])
 def delete_event(event_id):
     """Esemény törlése"""
-    event = Event.query.get_or_404(event_id)
-    db.session.delete(event)
+    Event.query.get_or_404(event_id)
+    mark_deleted('event', event_id)
     db.session.commit()
-    
     return '', 204
 
 
@@ -276,9 +330,9 @@ def get_documents():
     """Összes dokumentum lekérdezése"""
     person_id = request.args.get('person_id')
     if person_id:
-        documents = Document.query.filter_by(person_id=person_id).all()
+        documents = Document.query.filter_by(person_id=person_id).filter(not_deleted_filter(Document, 'document')).all()
     else:
-        documents = Document.query.all()
+        documents = Document.query.filter(not_deleted_filter(Document, 'document')).all()
     return jsonify([d.to_dict() for d in documents])
 
 
@@ -321,16 +375,9 @@ def upload_document():
 @api_bp.route('/documents/<int:document_id>', methods=['DELETE'])
 def delete_document(document_id):
     """Dokumentum törlése"""
-    document = Document.query.get_or_404(document_id)
-    
-    # Fájl törlése a lemezről
-    filepath = os.path.join(current_app.root_path, '..', document.file_path.lstrip('/'))
-    if os.path.exists(filepath):
-        os.remove(filepath)
-    
-    db.session.delete(document)
+    Document.query.get_or_404(document_id)
+    mark_deleted('document', document_id)
     db.session.commit()
-    
     return '', 204
 
 
@@ -339,8 +386,8 @@ def delete_document(document_id):
 @api_bp.route('/tree/data', methods=['GET'])
 def get_tree_data():
     """Családfa adatok lekérdezése vizualizációhoz"""
-    persons = Person.query.all()
-    marriages = Marriage.query.all()
+    persons = Person.query.filter(not_deleted_filter(Person, 'person')).all()
+    marriages = Marriage.query.filter(not_deleted_filter(Marriage, 'marriage')).all()
     
     nodes = []
     links = []
@@ -377,13 +424,15 @@ def get_tree_data():
             })
     
     # Házassági kapcsolatok
+    person_ids = {p.id for p in persons}
     for marriage in marriages:
-        links.append({
-            'source': marriage.person1_id,
-            'target': marriage.person2_id,
-            'type': 'marriage',
-            'marriage_id': marriage.id
-        })
+        if marriage.person1_id in person_ids and marriage.person2_id in person_ids:
+            links.append({
+                'source': marriage.person1_id,
+                'target': marriage.person2_id,
+                'type': 'marriage',
+                'marriage_id': marriage.id
+            })
     
     return jsonify({
         'nodes': nodes,
@@ -474,8 +523,8 @@ def update_settings():
 @api_bp.route('/export/gedcom', methods=['GET'])
 def export_gedcom():
     """Export GEDCOM formátumban (genealógiai standard)"""
-    persons = Person.query.all()
-    marriages = Marriage.query.all()
+    persons = Person.query.filter(not_deleted_filter(Person, 'person')).all()
+    marriages = Marriage.query.filter(not_deleted_filter(Marriage, 'marriage')).all()
     
     gedcom = "0 HEAD\n"
     gedcom += "1 SOUR FamilySearch\n"
@@ -536,9 +585,9 @@ def export_gedcom():
 @api_bp.route('/export/json', methods=['GET'])
 def export_json():
     """Export JSON formátumban"""
-    persons = Person.query.all()
-    marriages = Marriage.query.all()
-    events = Event.query.all()
+    persons = Person.query.filter(not_deleted_filter(Person, 'person')).all()
+    marriages = Marriage.query.filter(not_deleted_filter(Marriage, 'marriage')).all()
+    events = Event.query.filter(not_deleted_filter(Event, 'event')).all()
     
     data = {
         'persons': [p.to_dict() for p in persons],
@@ -608,7 +657,7 @@ def search():
     if len(query) < 2:
         return jsonify([])
     
-    persons = Person.query.filter(
+    persons = Person.query.filter(not_deleted_filter(Person, 'person')).filter(
         (Person.first_name.ilike(f'%{query}%')) |
         (Person.last_name.ilike(f'%{query}%')) |
         (Person.maiden_name.ilike(f'%{query}%')) |
@@ -623,21 +672,22 @@ def search():
 @api_bp.route('/stats', methods=['GET'])
 def get_stats():
     """Statisztikák lekérdezése"""
-    total_persons = Person.query.count()
-    living_persons = Person.query.filter(Person.death_date.is_(None)).count()
-    male_count = Person.query.filter_by(gender='male').count()
-    female_count = Person.query.filter_by(gender='female').count()
-    marriages_count = Marriage.query.count()
+    active_persons = Person.query.filter(not_deleted_filter(Person, 'person'))
+    total_persons = active_persons.count()
+    living_persons = active_persons.filter(Person.death_date.is_(None)).count()
+    male_count = active_persons.filter_by(gender='male').count()
+    female_count = active_persons.filter_by(gender='female').count()
+    marriages_count = Marriage.query.filter(not_deleted_filter(Marriage, 'marriage')).count()
     
     # Legidősebb személy
-    oldest_living = Person.query.filter(
+    oldest_living = active_persons.filter(
         Person.death_date.is_(None),
         Person.birth_date.isnot(None)
     ).order_by(Person.birth_date).first()
     
     # Generációk száma (becsült)
-    earliest_birth = Person.query.filter(Person.birth_date.isnot(None)).order_by(Person.birth_date).first()
-    latest_birth = Person.query.filter(Person.birth_date.isnot(None)).order_by(Person.birth_date.desc()).first()
+    earliest_birth = active_persons.filter(Person.birth_date.isnot(None)).order_by(Person.birth_date).first()
+    latest_birth = active_persons.filter(Person.birth_date.isnot(None)).order_by(Person.birth_date.desc()).first()
     
     generations = 1
     if earliest_birth and latest_birth and earliest_birth.birth_date and latest_birth.birth_date:
@@ -655,3 +705,87 @@ def get_stats():
         'estimated_generations': generations,
         'oldest_living': oldest_living.to_dict() if oldest_living else None
     })
+
+
+# ==================== LOMTÁR / VISSZAÁLLÍTÁS API ====================
+
+def _entity_to_dict(entity_type, entity_id):
+    """Segédfüggvény: visszaadja az entitás to_dict-jét, ha létezik."""
+    model_map = {
+        'person': Person,
+        'marriage': Marriage,
+        'event': Event,
+        'document': Document
+    }
+    model = model_map.get(entity_type)
+    if not model:
+        return None
+    instance = model.query.get(entity_id)
+    return instance.to_dict() if instance else None
+
+
+@api_bp.route('/trash', methods=['GET'])
+def list_trash():
+    """Lomtár tartalmának listázása"""
+    deleted = DeletedRecord.query.order_by(DeletedRecord.deleted_at.desc()).all()
+    result = []
+
+    for rec in deleted:
+        item = rec.to_dict()
+        item['data'] = _entity_to_dict(rec.entity_type, rec.entity_id)
+        result.append(item)
+
+    return jsonify(result)
+
+
+@api_bp.route('/trash/restore', methods=['POST'])
+def restore_from_trash():
+    """Entitás visszaállítása a lomtárból"""
+    data = request.get_json() or {}
+    entity_type = data.get('entity_type')
+    entity_id = data.get('entity_id')
+
+    if not entity_type or entity_id is None:
+        return jsonify({'error': 'Hiányzó paraméter'}), 400
+
+    record = DeletedRecord.query.filter_by(entity_type=entity_type, entity_id=entity_id).first()
+    if not record:
+        return jsonify({'error': 'Nem található a lomtárban'}), 404
+
+    db.session.delete(record)
+    db.session.commit()
+
+    return jsonify({'status': 'restored', 'entity_type': entity_type, 'entity_id': entity_id})
+
+
+@api_bp.route('/trash/delete', methods=['POST'])
+def delete_permanently():
+    """Entitás végleges törlése az adatbázisból"""
+    data = request.get_json() or {}
+    entity_type = data.get('entity_type')
+    entity_id = data.get('entity_id')
+
+    if not entity_type or entity_id is None:
+        return jsonify({'error': 'Hiányzó paraméter'}), 400
+
+    # Lomtár bejegyzés törlése
+    record = DeletedRecord.query.filter_by(entity_type=entity_type, entity_id=entity_id).first()
+    if record:
+        db.session.delete(record)
+
+    # Entitás törlése az adatbázisból
+    model_map = {
+        'person': Person,
+        'marriage': Marriage,
+        'event': Event,
+        'document': Document
+    }
+    model = model_map.get(entity_type)
+    if model:
+        instance = model.query.get(entity_id)
+        if instance:
+            db.session.delete(instance)
+    
+    db.session.commit()
+
+    return jsonify({'status': 'deleted', 'entity_type': entity_type, 'entity_id': entity_id})

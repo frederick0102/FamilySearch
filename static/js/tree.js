@@ -147,12 +147,32 @@ function renderTree() {
                 .nodeSize([horizontalSpacing, verticalSpacing]);
             root = treeLayout(hierarchy);
     }
+
+    // Partner-only csomópontok pozicionálása, hogy a házastársak egy szinten maradjanak
+    positionPartners(root, {
+        horizontalSpacing,
+        verticalSpacing,
+        cardWidth,
+        cardHeight
+    });
+
+    // Közös gyerekek pozicionálása a házassági pont alá/közé
+    alignMarriageChildren(root, {
+        horizontalSpacing,
+        verticalSpacing
+    });
     
-    // Kapcsolat vonalak rajzolása
+    // Szülő-gyermek vonalak rajzolása (kihagyjuk, ha a gyereknek mindkét szülője jelen van és T elágazást rajzolunk)
+    const bothParents = new Set(
+        treeData.nodes
+            .filter(n => n.father_id && n.mother_id)
+            .map(n => n.id)
+    );
+
     const links = g.append('g')
         .attr('class', 'links')
         .selectAll('path')
-        .data(root.links())
+        .data(root.links().filter(l => !bothParents.has(l.target.data.id)))
         .enter()
         .append('path')
         .attr('class', 'tree-link')
@@ -160,8 +180,9 @@ function renderTree() {
         .style('stroke', settings.line_color || '#666')
         .style('stroke-width', settings.line_width || 2);
     
-    // Házassági kapcsolatok rajzolása
-    renderMarriageLinks(root);
+    // Házassági kapcsolatok rajzolása + gyerekek összekötése
+    const marriageRender = renderMarriageLinks(root);
+    renderMarriageChildren(root, marriageRender);
     
     // Csomópontok (személyek) rajzolása
     const nodes = g.append('g')
@@ -202,7 +223,7 @@ function renderTree() {
             .attr('r', 25);
         
         nodes.append('image')
-            .attr('xlink:href', d => d.data.photo || '/static/img/default-avatar.png')
+            .attr('xlink:href', d => d.data.photo || '/static/img/placeholder-avatar.svg')
             .attr('x', -cardWidth / 2 + 5)
             .attr('y', -25)
             .attr('width', 50)
@@ -274,6 +295,77 @@ function renderTree() {
     centerTree();
 }
 
+// Partner-only csomópontok igazítása elrendezés szerint
+function positionPartners(root, sizes) {
+    const offsetX = (sizes.cardWidth || 200) + 80;
+    const offsetY = (sizes.cardHeight || 100) + 80;
+
+    root.each(d => {
+        if (!d.data.partnerOnly || !d.parent) return;
+
+        if (currentLayout === 'vertical') {
+            d.y = d.parent.y;          // azonos szint
+            d.x = d.parent.x + offsetX; // jobbra toljuk
+        } else if (currentLayout === 'horizontal') {
+            d.x = d.parent.x;           // azonos mélység
+            d.y = d.parent.y + offsetY; // lejjebb toljuk
+        } else {
+            // radiálisnál nem igazítunk, marad az alap pozíció
+        }
+    });
+}
+
+// Közös gyerekek pozicionálása a házassági pont körül, hogy középen legyenek és egy szintre kerüljenek
+function alignMarriageChildren(root, sizes) {
+    const idToNode = new Map();
+    root.descendants().forEach(n => idToNode.set(n.data.id, n));
+
+    const marriages = treeData.links.filter(l => l.type === 'marriage');
+    marriages.forEach(link => {
+        const p1 = idToNode.get(link.source);
+        const p2 = idToNode.get(link.target);
+        if (!p1 || !p2) return;
+
+        const midX = (p1.x + p2.x) / 2;
+        const midY = (p1.y + p2.y) / 2;
+
+        const children = treeData.nodes.filter(n => {
+            if (!n.father_id || !n.mother_id) return false;
+            return (n.father_id === link.source && n.mother_id === link.target) ||
+                   (n.father_id === link.target && n.mother_id === link.source);
+        });
+
+        if (!children.length) return;
+
+        const childNodes = children
+            .map(c => idToNode.get(c.id))
+            .filter(Boolean)
+            .sort((a, b) => a.data.id - b.data.id); // stabil sorrend
+
+        const count = childNodes.length;
+        const hGap = sizes.horizontalSpacing || 250;
+        const vGap = sizes.verticalSpacing || 180;
+
+        if (currentLayout === 'vertical') {
+            // Egy szintre tesszük őket, a midX körül egyenletesen elosztva
+            const baseY = Math.max(...childNodes.map(n => n.y), midY + vGap / 2);
+            childNodes.forEach((n, idx) => {
+                const offset = (idx - (count - 1) / 2) * hGap;
+                n.x = midX + offset;
+                n.y = baseY;
+            });
+        } else if (currentLayout === 'horizontal') {
+            // Egy szintre tesszük őket, a midY körül elosztva
+            const baseX = Math.max(...childNodes.map(n => n.x), midX + hGap / 2);
+            childNodes.forEach((n, idx) => {
+                const offset = (idx - (count - 1) / 2) * vGap;
+                n.y = midY + offset;
+                n.x = baseX;
+            });
+        }
+    });
+}
+
 // ==================== HIERARCHIA ÉPÍTÉS ====================
 function buildHierarchy() {
     if (treeData.nodes.length === 0) return null;
@@ -309,19 +401,70 @@ function buildHierarchy() {
     
     // Node map létrehozása
     const nodeMap = new Map(treeData.nodes.map(n => [n.id, { ...n, children: [] }]));
-    
-    // Szülő-gyermek kapcsolatok felépítése
+
+    // Segédfüggvény: gyermek hozzáadása duplikáció nélkül
+    const addChild = (parentId, childId, options = {}) => {
+        if (!nodeMap.has(parentId) || !nodeMap.has(childId)) return;
+        const parent = nodeMap.get(parentId);
+        const child = nodeMap.get(childId);
+        if (!parent.children.some(c => c.id === child.id)) {
+            parent.children.push(options.partnerOnly ? { ...child, partnerOnly: true } : child);
+        }
+    };
+
+    // Szülő-gyermek kapcsolatok felépítése (egyetlen szülői ág a fa elrendezéshez)
     treeData.nodes.forEach(node => {
-        if (node.father_id && nodeMap.has(node.father_id)) {
-            nodeMap.get(node.father_id).children.push(nodeMap.get(node.id));
-        } else if (node.mother_id && nodeMap.has(node.mother_id)) {
-            nodeMap.get(node.mother_id).children.push(nodeMap.get(node.id));
+        if (node.father_id) {
+            addChild(node.father_id, node.id);
+        } else if (node.mother_id) {
+            addChild(node.mother_id, node.id);
         }
     });
-    
+
+    // Kezdeti fa a root köré
     const rootNode = nodeMap.get(rootId);
     if (!rootNode) return null;
-    
+
+    // Jelenleg elérhető csomópontok bejárása
+    const visited = new Set();
+    const dfs = (node) => {
+        if (!node || visited.has(node.id)) return;
+        visited.add(node.id);
+        if (node.partnerOnly) return; // partnerként beszúrt csomópontnál ne menjünk tovább
+        node.children.forEach(dfs);
+    };
+    dfs(rootNode);
+
+    // Házasságok mentén kapcsoljuk be a fa komponensbe a hiányzó partnereket
+    // Védőkorlát, hogy végtelen ciklus ne forduljon elő hibás adatoknál
+    let added = true;
+    let safety = 0;
+    while (added && safety < 20) {
+        added = false;
+        safety += 1;
+        treeData.links
+            .filter(l => l.type === 'marriage')
+            .forEach(link => {
+                const a = nodeMap.get(link.source);
+                const b = nodeMap.get(link.target);
+                if (!a || !b) return;
+
+                // Ne hozzunk létre közvetlen ciklust: ha a child már tartalmazza a parentet, kihagyjuk
+                const wouldCycle = (child, parent) => child.children.some(c => c.id === parent.id);
+
+                // Ha az egyik partner már a fában van, a másikat gyermeként hozzákapcsoljuk, hogy megjelenjen
+                if (visited.has(a.id) && !visited.has(b.id) && !wouldCycle(b, a)) {
+                    addChild(a.id, b.id, { partnerOnly: true });
+                    dfs(a);
+                    added = true;
+                } else if (visited.has(b.id) && !visited.has(a.id) && !wouldCycle(a, b)) {
+                    addChild(b.id, a.id, { partnerOnly: true });
+                    dfs(b);
+                    added = true;
+                }
+            });
+    }
+
     return d3.hierarchy(rootNode);
 }
 
@@ -352,6 +495,7 @@ function renderMarriageLinks(root) {
     root.descendants().forEach(d => {
         nodePositions.set(d.data.id, { x: d.x, y: d.y });
     });
+    const midpoints = [];
     
     marriageLinks.forEach(link => {
         const source = nodePositions.get(link.source);
@@ -371,6 +515,7 @@ function renderMarriageLinks(root) {
             // Szív ikon a házasság közepén
             const midX = (source.x + target.x) / 2;
             const midY = (source.y + target.y) / 2;
+            midpoints.push({ marriageId: link.marriage_id, x: midX, y: midY, source: link.source, target: link.target });
             
             g.append('text')
                 .attr('x', midX)
@@ -382,6 +527,148 @@ function renderMarriageLinks(root) {
                 .style('font-size', '16px')
                 .style('fill', '#e74c3c')
                 .text('\uf004'); // heart icon
+        }
+    });
+
+    return { midpoints, nodePositions };
+}
+
+// Közös gyerekek vizuális összekötése a házassági vonalról leágazóan
+function renderMarriageChildren(root, marriageRender) {
+    if (!marriageRender || !marriageRender.midpoints) return;
+    if (currentLayout === 'radial') return; // radiálisnál nem rajzoljuk
+
+    const { midpoints, nodePositions } = marriageRender;
+    const cardW = settings.card_width || 200;
+    const cardH = settings.card_height || 100;
+
+    midpoints.forEach(mp => {
+        const children = treeData.nodes.filter(n => {
+            if (!n.father_id || !n.mother_id) return false;
+            const parents = [n.father_id, n.mother_id];
+            return parents.includes(mp.source) && parents.includes(mp.target);
+        });
+
+        if (children.length === 0) return;
+
+        const childPositions = children
+            .map(c => ({
+                node: c,
+                pos: nodePositions.get(c.id),
+                topY: nodePositions.get(c.id) ? nodePositions.get(c.id).y - cardH / 2 : null,
+                leftX: nodePositions.get(c.id) ? nodePositions.get(c.id).x - cardW / 2 : null
+            }))
+            .filter(cp => cp.pos);
+        if (childPositions.length === 0) return;
+
+        const color = settings.line_color || '#666';
+        const width = settings.line_width || 2;
+
+        if (currentLayout === 'vertical') {
+            if (childPositions.length === 1) {
+                const cp = childPositions[0];
+                // függőleges leágazás a gyermek kártya tetejéig, majd rövid vízszintes a közepéig
+                g.append('line')
+                    .attr('class', 'tree-link marriage-child')
+                    .attr('x1', mp.x)
+                    .attr('y1', mp.y)
+                    .attr('x2', mp.x)
+                    .attr('y2', cp.topY)
+                    .style('stroke', color)
+                    .style('stroke-width', width);
+                g.append('line')
+                    .attr('class', 'tree-link marriage-child')
+                    .attr('x1', mp.x)
+                    .attr('y1', cp.topY)
+                    .attr('x2', cp.pos.x)
+                    .attr('y2', cp.topY)
+                    .style('stroke', color)
+                    .style('stroke-width', width);
+            } else {
+                const targetY = Math.min(...childPositions.map(cp => cp.topY));
+                const junctionY = (mp.y + targetY) / 2;
+
+                g.append('line')
+                    .attr('class', 'tree-link marriage-child')
+                    .attr('x1', mp.x)
+                    .attr('y1', mp.y)
+                    .attr('x2', mp.x)
+                    .attr('y2', junctionY)
+                    .style('stroke', color)
+                    .style('stroke-width', width);
+
+                childPositions.forEach(cp => {
+                    // leágazás a gyermek tetejéig, majd rövid vízszintes a kártya közepéig
+                    g.append('line')
+                        .attr('class', 'tree-link marriage-child')
+                        .attr('x1', mp.x)
+                        .attr('y1', junctionY)
+                        .attr('x2', mp.x)
+                        .attr('y2', cp.topY)
+                        .style('stroke', color)
+                        .style('stroke-width', width);
+                    g.append('line')
+                        .attr('class', 'tree-link marriage-child')
+                        .attr('x1', mp.x)
+                        .attr('y1', cp.topY)
+                        .attr('x2', cp.pos.x)
+                        .attr('y2', cp.topY)
+                        .style('stroke', color)
+                        .style('stroke-width', width);
+                });
+            }
+        } else if (currentLayout === 'horizontal') {
+            if (childPositions.length === 1) {
+                const cp = childPositions[0];
+                // vízszintes leágazás a gyermek kártya bal széléig, majd rövid függőleges a közepéig
+                g.append('line')
+                    .attr('class', 'tree-link marriage-child')
+                    .attr('x1', mp.x)
+                    .attr('y1', mp.y)
+                    .attr('x2', cp.leftX)
+                    .attr('y2', mp.y)
+                    .style('stroke', color)
+                    .style('stroke-width', width);
+                g.append('line')
+                    .attr('class', 'tree-link marriage-child')
+                    .attr('x1', cp.leftX)
+                    .attr('y1', mp.y)
+                    .attr('x2', cp.leftX)
+                    .attr('y2', cp.pos.y)
+                    .style('stroke', color)
+                    .style('stroke-width', width);
+            } else {
+                const targetX = Math.min(...childPositions.map(cp => cp.leftX));
+                const junctionX = (mp.x + targetX) / 2;
+
+                g.append('line')
+                    .attr('class', 'tree-link marriage-child')
+                    .attr('x1', mp.x)
+                    .attr('y1', mp.y)
+                    .attr('x2', junctionX)
+                    .attr('y2', mp.y)
+                    .style('stroke', color)
+                    .style('stroke-width', width);
+
+                childPositions.forEach(cp => {
+                    g.append('line')
+                        .attr('class', 'tree-link marriage-child')
+                        .attr('x1', junctionX)
+                        .attr('y1', mp.y)
+                        .attr('x2', cp.leftX)
+                        .attr('y2', mp.y)
+                        .style('stroke', color)
+                        .style('stroke-width', width);
+                    g.append('line')
+                        .attr('class', 'tree-link marriage-child')
+                        .attr('x1', cp.leftX)
+                        .attr('y1', mp.y)
+                        .attr('x2', cp.leftX)
+                        .attr('y2', cp.pos.y)
+                        .style('stroke', color)
+                        .style('stroke-width', width);
+                });
+            }
         }
     });
 }
@@ -491,40 +778,63 @@ function renderEmptyState() {
 // ==================== KÉP EXPORTÁLÁS ====================
 function exportTreeImage() {
     const svgElement = document.getElementById('family-tree');
-    const svgData = new XMLSerializer().serializeToString(svgElement);
-    
-    // Stílusok beágyazása
-    const styleSheet = document.styleSheets[0];
-    let styles = '';
-    try {
-        for (let rule of styleSheet.cssRules) {
-            styles += rule.cssText;
-        }
-    } catch (e) {
-        console.warn('CSS szabályok nem olvashatók:', e);
+    const mainGroup = svgElement.querySelector('g');
+    if (!mainGroup) return;
+
+    // Határoló doboz és padding a teljes fa köré
+    const bounds = mainGroup.getBBox();
+    const padding = 40;
+    const exportWidth = Math.max(1, bounds.width + padding * 2);
+    const exportHeight = Math.max(1, bounds.height + padding * 2);
+
+    // Klón készítése, hogy az eredeti DOM-ot ne módosítsuk
+    const clonedSvg = svgElement.cloneNode(true);
+    const clonedGroup = clonedSvg.querySelector('g');
+    if (clonedGroup) {
+        // Eltoljuk, hogy pozitív koordinátákban legyen a tartalom
+        clonedGroup.setAttribute('transform', `translate(${padding - bounds.x}, ${padding - bounds.y})`);
     }
-    
-    const svgWithStyles = svgData.replace(
-        '<svg',
-        `<svg xmlns="http://www.w3.org/2000/svg"><style>${styles}</style>`
-    );
-    
-    // Blob létrehozása
-    const blob = new Blob([svgWithStyles], { type: 'image/svg+xml' });
+
+    // Méret és viewBox beállítása
+    clonedSvg.setAttribute('width', exportWidth);
+    clonedSvg.setAttribute('height', exportHeight);
+    clonedSvg.setAttribute('viewBox', `0 0 ${exportWidth} ${exportHeight}`);
+    clonedSvg.setAttribute('xmlns', 'http://www.w3.org/2000/svg');
+
+    // Stílusok összegyűjtése (amik elérhetők)
+    let styles = '';
+    for (const sheet of Array.from(document.styleSheets)) {
+        try {
+            for (const rule of Array.from(sheet.cssRules || [])) {
+                styles += rule.cssText;
+            }
+        } catch (e) {
+            // Cross-origin stílusok ignorálása
+        }
+    }
+
+    const styleNode = document.createElement('style');
+    styleNode.innerHTML = styles;
+    clonedSvg.insertBefore(styleNode, clonedSvg.firstChild);
+
+    // SVG stringgé alakítás
+    const serializer = new XMLSerializer();
+    const svgString = serializer.serializeToString(clonedSvg);
+    const blob = new Blob([svgString], { type: 'image/svg+xml' });
     const url = URL.createObjectURL(blob);
-    
+
     // Canvas konvertálás PNG-hez
     const canvas = document.createElement('canvas');
     const ctx = canvas.getContext('2d');
     const img = new Image();
-    
     img.onload = () => {
-        canvas.width = img.width * 2;
-        canvas.height = img.height * 2;
+        // 2x scale a jobb minőségért
+        canvas.width = exportWidth * 2;
+        canvas.height = exportHeight * 2;
         ctx.fillStyle = settings.background_color || '#F5F5F5';
         ctx.fillRect(0, 0, canvas.width, canvas.height);
         ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
-        
+
         canvas.toBlob((pngBlob) => {
             const pngUrl = URL.createObjectURL(pngBlob);
             const a = document.createElement('a');
@@ -533,10 +843,10 @@ function exportTreeImage() {
             a.click();
             URL.revokeObjectURL(pngUrl);
         }, 'image/png');
-        
+
         URL.revokeObjectURL(url);
     };
-    
+    img.onerror = () => URL.revokeObjectURL(url);
     img.src = url;
 }
 

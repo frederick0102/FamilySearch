@@ -1,0 +1,13 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="200" height="200" viewBox="0 0 200 200" role="img" aria-label="Alapértelmezett profilkép">
+  <defs>
+    <linearGradient id="bg" x1="0%" y1="0%" x2="0%" y2="100%">
+      <stop offset="0%" stop-color="#e8ecf2" />
+      <stop offset="100%" stop-color="#d5dbe5" />
+    </linearGradient>
+  </defs>
+  <rect width="200" height="200" fill="url(#bg)" rx="24" ry="24" />
+  <circle cx="100" cy="78" r="44" fill="#c6ccda" />
+  <circle cx="100" cy="70" r="34" fill="#f5f7fa" />
+  <path d="M40 178c4-34 30-58 60-58s56 24 60 58" fill="#c6ccda" />
+  <path d="M54 174c6-24 24-38 46-38s40 14 46 38" fill="#eef1f6" />
+</svg>
