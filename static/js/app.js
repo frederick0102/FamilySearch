@@ -438,8 +438,8 @@ async function loadPersonRelations(personId) {
                     </span>
                 </div>
                 <div class="actions">
-                    <button onclick="editMarriage(${m.id})" title="Szerkesztés"><i class="fas fa-edit"></i></button>
-                    <button class="delete" onclick="deleteMarriage(${m.id})" title="Törlés"><i class="fas fa-trash"></i></button>
+                    <button type="button" onclick="editMarriage(${m.id}); return false;" title="Szerkesztés"><i class="fas fa-edit"></i></button>
+                    <button type="button" class="delete" onclick="deleteMarriage(${m.id}); return false;" title="Törlés"><i class="fas fa-trash"></i></button>
                 </div>
             </div>
         `;
@@ -647,6 +647,69 @@ async function deleteMarriage(marriageId) {
             showNotification('Hiba a törlés során', 'error');
         }
     });
+}
+
+async function editMarriage(marriageId) {
+    // Házasságok újratöltése, ha szükséges
+    if (!marriages || marriages.length === 0) {
+        marriages = await API.get('/marriages');
+    }
+    
+    // Házasság adatainak lekérése
+    const marriage = marriages.find(m => m.id === marriageId);
+    if (!marriage) {
+        // Próbáljuk meg közvetlenül lekérni
+        try {
+            marriages = await API.get('/marriages');
+            const m = marriages.find(m => m.id === marriageId);
+            if (!m) {
+                showNotification('Kapcsolat nem található', 'error');
+                return;
+            }
+            await openMarriageEditModal(m);
+        } catch (error) {
+            showNotification('Hiba a kapcsolat betöltésekor', 'error');
+        }
+        return;
+    }
+
+    await openMarriageEditModal(marriage);
+}
+
+async function openMarriageEditModal(marriage) {
+    const modal = document.getElementById('marriage-modal');
+    const form = document.getElementById('marriage-form');
+    
+    form.reset();
+    
+    // Partner választó feltöltése
+    const otherPersons = persons.filter(p => p.id !== currentPersonId);
+    const partnerSelect = document.getElementById('marriage-person2');
+    partnerSelect.innerHTML = '<option value="">-- Válasszon --</option>' +
+        otherPersons.map(p => `<option value="${p.id}">${p.display_name || p.full_name}</option>`).join('');
+    
+    // Űrlap kitöltése a meglévő adatokkal
+    document.getElementById('marriage-id').value = marriage.id;
+    document.getElementById('marriage-person1-id').value = currentPersonId;
+    
+    // Partner kiválasztása (amelyik nem az aktuális személy)
+    const partnerId = marriage.person1_id === currentPersonId ? marriage.person2_id : marriage.person1_id;
+    partnerSelect.value = partnerId;
+    
+    document.getElementById('marriage-type').value = marriage.relationship_type || 'marriage';
+    document.getElementById('marriage-place').value = marriage.marriage_place || '';
+    document.getElementById('marriage-end-reason').value = marriage.end_reason || '';
+    document.getElementById('marriage-notes').value = marriage.notes || '';
+    
+    // Dátumok beállítása flatpickr-rel
+    if (datePickers.marriageStart) {
+        datePickers.marriageStart.setDate(marriage.start_date || null);
+    }
+    if (datePickers.marriageEnd) {
+        datePickers.marriageEnd.setDate(marriage.end_date || null);
+    }
+    
+    modal.classList.add('show');
 }
 
 // ==================== ESEMÉNY KEZELÉS ====================
@@ -1128,10 +1191,22 @@ function initDatePickers() {
         allowInput: true,
         altInput: true,
         altFormat: 'Y. m. d.',
-        monthSelectorType: 'static',
         prevArrow: '<i class="fas fa-chevron-left"></i>',
         nextArrow: '<i class="fas fa-chevron-right"></i>',
-        showMonths: 1
+        showMonths: 1,
+        static: false,
+        disableMobile: true,
+        // Év és hónap választó engedélyezése
+        plugins: [],
+        onOpen: function(selectedDates, dateStr, instance) {
+            // Év választó hozzáadása a fejléchez
+            const yearInput = instance.calendarContainer.querySelector('.cur-year');
+            if (yearInput) {
+                yearInput.removeAttribute('disabled');
+                yearInput.setAttribute('min', '1800');
+                yearInput.setAttribute('max', '2100');
+            }
+        }
     };
 
     // Személy űrlap dátumok - példányok mentése
