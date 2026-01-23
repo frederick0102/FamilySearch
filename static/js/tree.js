@@ -464,27 +464,43 @@ function buildHierarchy() {
             });
             rootId = candidates[0].id;
         } else if (treeData.nodes.length > 0) {
-            // Ha nincs megfelelő gyökér, az első személyt használjuk
             rootId = treeData.nodes[0].id;
         }
     }
     
     if (!rootId) return null;
     
-    // Node map létrehozása
+    // Node map létrehozása - FONTOS: minden node csak EGYSZER szerepel
     const nodeMap = new Map(treeData.nodes.map(n => [n.id, { ...n, children: [] }]));
+    
+    // Már hozzáadott partnerek nyilvántartása (duplikáció elkerülése)
+    const addedAsPartner = new Set(); // "parentId-partnerId" formátumban
 
     // Segédfüggvény: gyermek hozzáadása duplikáció nélkül
     const addChild = (parentId, childId, options = {}) => {
-        if (!nodeMap.has(parentId) || !nodeMap.has(childId)) return;
+        if (!nodeMap.has(parentId) || !nodeMap.has(childId)) return false;
+        if (parentId === childId) return false; // önmagát ne adja hozzá
+        
         const parent = nodeMap.get(parentId);
         const child = nodeMap.get(childId);
-        if (!parent.children.some(c => c.id === child.id)) {
-            parent.children.push(options.partnerOnly ? { ...child, partnerOnly: true } : child);
+        
+        // Már hozzá van adva?
+        if (parent.children.some(c => c.id === child.id)) return false;
+        
+        // Partnerként duplikáció ellenőrzés
+        if (options.partnerOnly) {
+            const key = `${parentId}-${childId}`;
+            if (addedAsPartner.has(key)) return false;
+            addedAsPartner.add(key);
+            parent.children.push({ ...child, partnerOnly: true });
+        } else {
+            parent.children.push(child);
         }
+        return true;
     };
 
-    // Szülő-gyermek kapcsolatok felépítése (egyetlen szülői ág a fa elrendezéshez)
+    // 1. LÉPÉS: Szülő-gyermek kapcsolatok (egy szülő mentén)
+    // Ha van apa, a gyerek az apához tartozik; különben az anyához
     treeData.nodes.forEach(node => {
         if (node.father_id) {
             addChild(node.father_id, node.id);
@@ -493,103 +509,71 @@ function buildHierarchy() {
         }
     });
 
-    // Szülőpárok összegyűjtése a gyerekek alapján (házasságtól függetlenül)
-    // Ha egy gyereknek van apja ÉS anyja, ők automatikusan "pár" a fa szempontjából
-    const parentPairs = new Set();
-    const parentPairsByChild = new Map(); // childId -> {fatherId, motherId}
+    // 2. LÉPÉS: Szülőpárok összegyűjtése (apa + anya akiknek közös gyerekük van)
+    const parentPairs = new Map(); // "id1-id2" -> { fatherId, motherId }
     treeData.nodes.forEach(node => {
         if (node.father_id && node.mother_id) {
-            // Mindig kisebb id -> nagyobb id sorrendben tároljuk
-            const pair = node.father_id < node.mother_id 
+            const key = node.father_id < node.mother_id 
                 ? `${node.father_id}-${node.mother_id}` 
                 : `${node.mother_id}-${node.father_id}`;
-            parentPairs.add(pair);
-            parentPairsByChild.set(node.id, { fatherId: node.father_id, motherId: node.mother_id });
+            if (!parentPairs.has(key)) {
+                parentPairs.set(key, { fatherId: node.father_id, motherId: node.mother_id });
+            }
         }
     });
 
-    // FONTOS: A másik szülőt (anya) KÖZVETLENÜL az apához csatoljuk partnerként,
-    // NEM a gyerekhez! Ezt MOST tesszük meg, mielőtt a visited set-et építjük.
-    parentPairsByChild.forEach(({ fatherId, motherId }, childId) => {
-        // Az anya az apa partnere lesz
+    // 3. LÉPÉS: Az anyát partnerként hozzáadjuk az apához (ha van közös gyerekük)
+    parentPairs.forEach(({ fatherId, motherId }) => {
         addChild(fatherId, motherId, { partnerOnly: true });
     });
 
-    // Kezdeti fa a root köré
+    // Gyökér node
     const rootNode = nodeMap.get(rootId);
     if (!rootNode) return null;
 
-    // Jelenleg elérhető csomópontok bejárása
+    // Visited set a bejárt csomópontokhoz
     const visited = new Set();
     const dfs = (node) => {
         if (!node || visited.has(node.id)) return;
         visited.add(node.id);
-        if (node.partnerOnly) return; // partnerként beszúrt csomópontnál ne menjünk tovább
-        node.children.forEach(dfs);
+        // Partnerek gyerekeit NE járjuk be (ők egy másik ágon vannak)
+        node.children.forEach(child => {
+            if (!child.partnerOnly) {
+                dfs(child);
+            } else {
+                visited.add(child.id); // De a partnert magát jelöljük meglátogatottnak
+            }
+        });
     };
     dfs(rootNode);
 
-    // Házasságok ÉS szülőpárok mentén kapcsoljuk be a fa komponensbe a hiányzó partnereket
-    // Védőkorlát, hogy végtelen ciklus ne forduljon elő hibás adatoknál
-    let added = true;
-    let safety = 0;
-    
-    // Összegyűjtjük az összes "pár" kapcsolatot: házasságok + közös gyerek alapján szülőpárok
-    // FONTOS: Először a szülőpárokat, aztán a többi házasságot
-    const allPartnerLinks = [];
-    
-    // Szülőpárok ELŐSZÖR (ezeknek van közös gyerekük - prioritás!)
-    parentPairs.forEach(pair => {
-        const [id1, id2] = pair.split('-').map(Number);
-        allPartnerLinks.push({ source: id1, target: id2, isParentPair: true });
-    });
-    
-    // Házasságok hozzáadása (ha még nincs benne szülőpárként)
+    // 4. LÉPÉS: Házasságok hozzáadása (ahol NINCS közös gyerek)
+    // Ezek a "csak házastársak" - pl. új férj
     treeData.links
         .filter(l => l.type === 'marriage')
         .forEach(link => {
             const key = link.source < link.target 
                 ? `${link.source}-${link.target}` 
                 : `${link.target}-${link.source}`;
-            // Csak ha nincs még benne
-            if (!parentPairs.has(key)) {
-                allPartnerLinks.push({ source: link.source, target: link.target, isParentPair: false });
-            }
-        });
-    
-    while (added && safety < 20) {
-        added = false;
-        safety += 1;
-        
-        // ELŐSZÖR a szülőpárokat dolgozzuk fel (ezeknek van közös gyerekük)
-        // Ezeket ELŐBB kell hozzáadni, hogy a megfelelő szülőhöz kerüljenek
-        allPartnerLinks.forEach(link => {
+            
+            // Ha már szülőpárként hozzáadtuk, kihagyjuk
+            if (parentPairs.has(key)) return;
+            
             const a = nodeMap.get(link.source);
             const b = nodeMap.get(link.target);
             if (!a || !b) return;
             
-            // Ellenőrizzük, hogy szülőpár-e (van közös gyerekük)
-            const pairKey = link.source < link.target 
-                ? `${link.source}-${link.target}` 
-                : `${link.target}-${link.source}`;
-            const isParentPair = parentPairs.has(pairKey);
-
-            // Ne hozzunk létre közvetlen ciklust: ha a child már tartalmazza a parentet, kihagyjuk
-            const wouldCycle = (child, parent) => child.children.some(c => c.id === parent.id);
-
-            // Ha az egyik partner már a fában van, a másikat partnerként hozzákapcsoljuk
-            if (visited.has(a.id) && !visited.has(b.id) && !wouldCycle(b, a)) {
-                // Közvetlenül ahhoz a személyhez csatoljuk, akivel házas
-                addChild(a.id, b.id, { partnerOnly: true });
-                visited.add(b.id); // Meglátogattuk, de ne menjünk tovább rajta
-                added = true;
-            } else if (visited.has(b.id) && !visited.has(a.id) && !wouldCycle(a, b)) {
-                addChild(b.id, a.id, { partnerOnly: true });
-                visited.add(a.id);
-                added = true;
+            // Ha az egyik már a fában van, a másikat partnerként hozzáadjuk
+            if (visited.has(a.id) && !visited.has(b.id)) {
+                if (addChild(a.id, b.id, { partnerOnly: true })) {
+                    visited.add(b.id);
+                }
+            } else if (visited.has(b.id) && !visited.has(a.id)) {
+                if (addChild(b.id, a.id, { partnerOnly: true })) {
+                    visited.add(a.id);
+                }
             }
         });
-    }
 
     return d3.hierarchy(rootNode);
 }
