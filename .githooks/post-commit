@@ -1,6 +1,12 @@
 #!/bin/bash
 # post-commit hook: Frissíti a verziószámot az új commit ID-vel
 
+# Elkerüljük a végtelen ciklust - ha már fut, kilépünk
+if [ -f "/tmp/.familysearch-post-commit-running" ]; then
+    exit 0
+fi
+touch /tmp/.familysearch-post-commit-running
+
 COMMIT_HASH=$(git rev-parse --short HEAD)
 INDEX_FILE="templates/index.html"
 
@@ -19,3 +25,5 @@ if [ -f "$INDEX_FILE" ]; then
         git commit --amend --no-edit --no-verify
     fi
 fi
+
+rm -f /tmp/.familysearch-post-commit-running
