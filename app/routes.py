@@ -803,8 +803,9 @@ def import_json():
     for person_data in data.get('persons', []):
         old_id = person_data.pop('id', None)
         
-        # Számított mezők eltávolítása
-        for field in ['full_name', 'display_name', 'age', 'is_alive', 'created_at', 'updated_at']:
+        # Számított mezők eltávolítása (ezeket a to_dict() generálja, de nem DB oszlopok)
+        for field in ['full_name', 'display_name', 'age', 'is_alive', 'created_at', 'updated_at', 
+                      'spouse_family_ids', 'parents']:
             person_data.pop(field, None)
         
         # Dátumok konvertálása
