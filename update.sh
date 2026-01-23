@@ -10,6 +10,11 @@ echo "🔄 FamilySearch frissítése..."
 if [ -d ".git" ]; then
     echo "📥 Legújabb változások letöltése..."
     git pull origin main
+else
+    echo "❌ HIBA: Ez nem egy git repository!"
+    echo "   Futtasd: git clone https://github.com/frederick0102/FamilySearch.git"
+    echo "   Vagy inicializáld: git init && git remote add origin https://github.com/frederick0102/FamilySearch.git && git fetch && git checkout main"
+    exit 1
 fi
 
 # Docker újraépítés és újraindítás
