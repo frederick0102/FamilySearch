@@ -421,6 +421,19 @@ function buildHierarchy() {
         }
     });
 
+    // Szülőpárok összegyűjtése a gyerekek alapján (házasságtól függetlenül)
+    // Ha egy gyereknek van apja ÉS anyja, ők automatikusan "pár" a fa szempontjából
+    const parentPairs = new Set();
+    treeData.nodes.forEach(node => {
+        if (node.father_id && node.mother_id) {
+            // Mindig kisebb id -> nagyobb id sorrendben tároljuk
+            const pair = node.father_id < node.mother_id 
+                ? `${node.father_id}-${node.mother_id}` 
+                : `${node.mother_id}-${node.father_id}`;
+            parentPairs.add(pair);
+        }
+    });
+
     // Kezdeti fa a root köré
     const rootNode = nodeMap.get(rootId);
     if (!rootNode) return null;
@@ -435,34 +448,56 @@ function buildHierarchy() {
     };
     dfs(rootNode);
 
-    // Házasságok mentén kapcsoljuk be a fa komponensbe a hiányzó partnereket
+    // Házasságok ÉS szülőpárok mentén kapcsoljuk be a fa komponensbe a hiányzó partnereket
     // Védőkorlát, hogy végtelen ciklus ne forduljon elő hibás adatoknál
     let added = true;
     let safety = 0;
+    
+    // Összegyűjtjük az összes "pár" kapcsolatot: házasságok + közös gyerek alapján szülőpárok
+    const allPartnerLinks = [];
+    
+    // Házasságok hozzáadása
+    treeData.links
+        .filter(l => l.type === 'marriage')
+        .forEach(link => {
+            allPartnerLinks.push({ source: link.source, target: link.target });
+        });
+    
+    // Szülőpárok hozzáadása (ha még nincs házasság köztük)
+    parentPairs.forEach(pair => {
+        const [id1, id2] = pair.split('-').map(Number);
+        // Ellenőrizzük, hogy van-e már házasság köztük
+        const hasMarriage = treeData.links.some(l => 
+            l.type === 'marriage' && 
+            ((l.source === id1 && l.target === id2) || (l.source === id2 && l.target === id1))
+        );
+        if (!hasMarriage) {
+            allPartnerLinks.push({ source: id1, target: id2 });
+        }
+    });
+    
     while (added && safety < 20) {
         added = false;
         safety += 1;
-        treeData.links
-            .filter(l => l.type === 'marriage')
-            .forEach(link => {
-                const a = nodeMap.get(link.source);
-                const b = nodeMap.get(link.target);
-                if (!a || !b) return;
+        allPartnerLinks.forEach(link => {
+            const a = nodeMap.get(link.source);
+            const b = nodeMap.get(link.target);
+            if (!a || !b) return;
 
-                // Ne hozzunk létre közvetlen ciklust: ha a child már tartalmazza a parentet, kihagyjuk
-                const wouldCycle = (child, parent) => child.children.some(c => c.id === parent.id);
+            // Ne hozzunk létre közvetlen ciklust: ha a child már tartalmazza a parentet, kihagyjuk
+            const wouldCycle = (child, parent) => child.children.some(c => c.id === parent.id);
 
-                // Ha az egyik partner már a fában van, a másikat gyermeként hozzákapcsoljuk, hogy megjelenjen
-                if (visited.has(a.id) && !visited.has(b.id) && !wouldCycle(b, a)) {
-                    addChild(a.id, b.id, { partnerOnly: true });
-                    dfs(a);
-                    added = true;
-                } else if (visited.has(b.id) && !visited.has(a.id) && !wouldCycle(a, b)) {
-                    addChild(b.id, a.id, { partnerOnly: true });
-                    dfs(b);
-                    added = true;
-                }
-            });
+            // Ha az egyik partner már a fában van, a másikat gyermeként hozzákapcsoljuk, hogy megjelenjen
+            if (visited.has(a.id) && !visited.has(b.id) && !wouldCycle(b, a)) {
+                addChild(a.id, b.id, { partnerOnly: true });
+                dfs(a);
+                added = true;
+            } else if (visited.has(b.id) && !visited.has(a.id) && !wouldCycle(a, b)) {
+                addChild(b.id, a.id, { partnerOnly: true });
+                dfs(b);
+                added = true;
+            }
+        });
     }
 
     return d3.hierarchy(rootNode);
@@ -487,7 +522,7 @@ function getLinkPath(d) {
     }
 }
 
-// ==================== HÁZASSÁGI KAPCSOLATOK ====================
+// ==================== HÁZASSÁGI ÉS SZÜLŐPÁR KAPCSOLATOK ====================
 function renderMarriageLinks(root) {
     const marriageLinks = treeData.links.filter(l => l.type === 'marriage');
     const nodePositions = new Map();
@@ -497,6 +532,32 @@ function renderMarriageLinks(root) {
     });
     const midpoints = [];
     
+    // Szülőpárok összegyűjtése a gyerekek alapján (házasságtól függetlenül)
+    const parentPairs = new Map(); // "id1-id2" -> { source, target }
+    treeData.nodes.forEach(node => {
+        if (node.father_id && node.mother_id) {
+            const key = node.father_id < node.mother_id 
+                ? `${node.father_id}-${node.mother_id}` 
+                : `${node.mother_id}-${node.father_id}`;
+            if (!parentPairs.has(key)) {
+                parentPairs.set(key, { 
+                    source: node.father_id, 
+                    target: node.mother_id 
+                });
+            }
+        }
+    });
+    
+    // Házasságok halmazának létrehozása
+    const marriageSet = new Set();
+    marriageLinks.forEach(link => {
+        const key = link.source < link.target 
+            ? `${link.source}-${link.target}` 
+            : `${link.target}-${link.source}`;
+        marriageSet.add(key);
+    });
+    
+    // Házasságok rajzolása
     marriageLinks.forEach(link => {
         const source = nodePositions.get(link.source);
         const target = nodePositions.get(link.target);
@@ -527,6 +588,32 @@ function renderMarriageLinks(root) {
                 .style('font-size', '16px')
                 .style('fill', '#e74c3c')
                 .text('\uf004'); // heart icon
+        }
+    });
+    
+    // Szülőpárok rajzolása (ha nincs házasság köztük)
+    parentPairs.forEach((pair, key) => {
+        if (marriageSet.has(key)) return; // Van házasság, már kirajzoltuk
+        
+        const source = nodePositions.get(pair.source);
+        const target = nodePositions.get(pair.target);
+        
+        if (source && target) {
+            // Szaggatott vonal házasság nélküli szülőpároknak
+            g.append('line')
+                .attr('class', 'tree-link parent-pair')
+                .attr('x1', source.x)
+                .attr('y1', source.y)
+                .attr('x2', target.x)
+                .attr('y2', target.y)
+                .style('stroke', settings.line_color || '#666')
+                .style('stroke-width', settings.line_width || 2)
+                .style('stroke-dasharray', '5,5');
+            
+            // Midpoint a gyerekek összekötéséhez
+            const midX = (source.x + target.x) / 2;
+            const midY = (source.y + target.y) / 2;
+            midpoints.push({ marriageId: null, x: midX, y: midY, source: pair.source, target: pair.target });
         }
     });
 
