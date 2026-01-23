@@ -833,7 +833,11 @@ def import_json():
         old_parent_family_id = person_data.pop('parent_family_id', None)
         person_data.pop('adoptive_family_id', None)  # Majd később állítjuk be
         
-        person = Person(**person_data)
+        try:
+            person = Person(**person_data)
+        except Exception as e:
+            db.session.rollback()
+            return jsonify({'error': f'Person létrehozás hiba: {str(e)}', 'fields': list(person_data.keys())}), 500
         db.session.add(person)
         db.session.flush()
         
