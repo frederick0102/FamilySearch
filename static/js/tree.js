@@ -496,6 +496,7 @@ function buildHierarchy() {
     // Szülőpárok összegyűjtése a gyerekek alapján (házasságtól függetlenül)
     // Ha egy gyereknek van apja ÉS anyja, ők automatikusan "pár" a fa szempontjából
     const parentPairs = new Set();
+    const parentPairsByChild = new Map(); // childId -> {fatherId, motherId}
     treeData.nodes.forEach(node => {
         if (node.father_id && node.mother_id) {
             // Mindig kisebb id -> nagyobb id sorrendben tároljuk
@@ -503,7 +504,15 @@ function buildHierarchy() {
                 ? `${node.father_id}-${node.mother_id}` 
                 : `${node.mother_id}-${node.father_id}`;
             parentPairs.add(pair);
+            parentPairsByChild.set(node.id, { fatherId: node.father_id, motherId: node.mother_id });
         }
+    });
+
+    // FONTOS: A másik szülőt (anya) KÖZVETLENÜL az apához csatoljuk partnerként,
+    // NEM a gyerekhez! Ezt MOST tesszük meg, mielőtt a visited set-et építjük.
+    parentPairsByChild.forEach(({ fatherId, motherId }, childId) => {
+        // Az anya az apa partnere lesz
+        addChild(fatherId, motherId, { partnerOnly: true });
     });
 
     // Kezdeti fa a root köré
