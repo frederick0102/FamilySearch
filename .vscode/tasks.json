@@ -1,24 +1,35 @@
 {
-    "version": "2.0.0",
-    "tasks": [
-        {
-            "label": "Run FamilySearch server",
-            "type": "shell",
-            "command": "C:/omsz/GH_repos/FamilySearch/.venv/Scripts/python.exe",
-            "args": [
-                "run.py"
-            ],
-            "options": {
-                "cwd": "${workspaceFolder}"
-            },
-            "group": "build",
-            "presentation": {
-                "reveal": "always",
-                "panel": "dedicated",
-                "clear": true
-            },
-            "problemMatcher": [],
-            "isBackground": true
-        }
-    ]
+	"version": "2.0.0",
+	"tasks": [
+		{
+			"label": "Run FamilySearch server",
+			"type": "shell",
+			"command": "C:/omsz/GH_repos/FamilySearch/.venv/Scripts/python.exe",
+			"args": [
+				"run.py"
+			],
+			"options": {
+				"cwd": "${workspaceFolder}"
+			},
+			"group": "build",
+			"presentation": {
+				"reveal": "always",
+				"panel": "dedicated",
+				"clear": true
+			},
+			"problemMatcher": [],
+			"isBackground": true
+		},
+		{
+			"label": "Run FamilySearch Server",
+			"type": "shell",
+			"command": "/Users/gutisandor/VSRepo/FamilySearch/.venv/bin/python",
+			"args": [
+				"run.py"
+			],
+			"isBackground": true,
+			"problemMatcher": [],
+			"group": "build"
+		}
+	]
 }
