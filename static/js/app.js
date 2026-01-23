@@ -1504,6 +1504,7 @@ function initThemeToggle() {
 }
 
 document.addEventListener('DOMContentLoaded', async () => {
+    // Alapvető UI inicializálás - ezeknek mindig működniük kell
     initNavigation();
     initModals();
     initTabs();
@@ -1512,12 +1513,7 @@ document.addEventListener('DOMContentLoaded', async () => {
     initDatePickers();
     initThemeToggle();
     
-    // Adatok betöltése
-    await loadSettings();
-    persons = await API.get('/persons');
-    updateRootPersonSelector();
-    
-    // Eseménykezelők
+    // Eseménykezelők - MINDIG regisztráljuk, még ha az adatok nem is töltődnek be
     document.getElementById('add-person-btn').addEventListener('click', () => openPersonModal());
     document.getElementById('save-person-btn').addEventListener('click', savePerson);
     document.getElementById('delete-person-btn').addEventListener('click', deletePerson);
@@ -1526,6 +1522,21 @@ document.addEventListener('DOMContentLoaded', async () => {
     document.getElementById('add-event-btn').addEventListener('click', openEventModal);
     document.getElementById('save-event-btn').addEventListener('click', saveEvent);
     document.getElementById('save-settings').addEventListener('click', saveSettings);
+    
+    // Export/Import - KRITIKUS, mindig működjön!
+    document.getElementById('export-json').addEventListener('click', exportJSON);
+    document.getElementById('export-gedcom-btn').addEventListener('click', exportGEDCOM);
+    document.getElementById('export-gedcom').addEventListener('click', exportGEDCOM);
+    
+    document.getElementById('import-json').addEventListener('click', () => {
+        document.getElementById('import-file').click();
+    });
+    
+    document.getElementById('import-file').addEventListener('change', (e) => {
+        if (e.target.files[0]) {
+            importJSON(e.target.files[0]);
+        }
+    });
     
     // Fájl feltöltések
     document.getElementById('upload-photo-btn').addEventListener('click', () => {
@@ -1546,24 +1557,6 @@ document.addEventListener('DOMContentLoaded', async () => {
         Array.from(e.target.files).forEach(file => uploadDocument(file));
     });
     
-    // Export/Import
-    document.getElementById('export-json').addEventListener('click', exportJSON);
-    document.getElementById('export-gedcom-btn').addEventListener('click', exportGEDCOM);
-    document.getElementById('export-gedcom').addEventListener('click', exportGEDCOM);
-    
-    document.getElementById('import-json').addEventListener('click', () => {
-        document.getElementById('import-file').click();
-    });
-    
-    document.getElementById('import-file').addEventListener('change', (e) => {
-        if (e.target.files[0]) {
-            importJSON(e.target.files[0]);
-        }
-    });
-    
-    // Fa inicializálás
-    initTree();
-    
     // Teljes képernyő
     document.getElementById('fullscreen').addEventListener('click', () => {
         const treeContainer = document.getElementById('tree-container');
@@ -1573,4 +1566,26 @@ document.addEventListener('DOMContentLoaded', async () => {
             treeContainer.requestFullscreen();
         }
     });
+    
+    // Adatok betöltése - hibakezeléssel, hogy ne álljon le az app
+    try {
+        await loadSettings();
+    } catch (error) {
+        console.error('Beállítások betöltési hiba:', error);
+    }
+    
+    try {
+        persons = await API.get('/persons');
+        updateRootPersonSelector();
+    } catch (error) {
+        console.error('Személyek betöltési hiba:', error);
+        persons = [];
+    }
+    
+    // Fa inicializálás
+    try {
+        initTree();
+    } catch (error) {
+        console.error('Fa inicializálási hiba:', error);
+    }
 });
