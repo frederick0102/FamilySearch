@@ -14,35 +14,41 @@
         <nav class="navbar">
             <div class="navbar-brand">
                 <i class="fas fa-tree"></i>
-                <span>Családfakutató</span>
             </div>
-            <div class="navbar-menu">
+            <button class="navbar-toggle" id="navbar-toggle" aria-label="Menü">
+                <i class="fas fa-bars"></i>
+            </button>
+            <div class="navbar-menu" id="navbar-menu">
                 <button class="nav-btn active" data-view="tree">
-                    <i class="fas fa-sitemap"></i> Családfa
+                    <i class="fas fa-sitemap"></i> <span>Családfa</span>
                 </button>
                 <button class="nav-btn" data-view="persons">
-                    <i class="fas fa-users"></i> Személyek
+                    <i class="fas fa-users"></i> <span>Személyek</span>
                 </button>
                 <button class="nav-btn" data-view="trash">
-                    <i class="fas fa-trash-restore"></i> Lomtár
+                    <i class="fas fa-trash-restore"></i> <span>Lomtár</span>
                 </button>
                 <button class="nav-btn" data-view="stats">
-                    <i class="fas fa-chart-bar"></i> Statisztika
+                    <i class="fas fa-chart-bar"></i> <span>Statisztika</span>
                 </button>
                 <button class="nav-btn" data-view="settings">
-                    <i class="fas fa-cog"></i> Beállítások
+                    <i class="fas fa-cog"></i> <span>Beállítások</span>
                 </button>
             </div>
             <div class="navbar-actions">
+                <div class="theme-toggle" id="theme-toggle" title="Sötét/Világos mód">
+                    <i class="fas fa-moon"></i>
+                    <i class="fas fa-sun"></i>
+                </div>
                 <div class="search-box">
                     <input type="text" id="global-search" placeholder="Keresés...">
                     <i class="fas fa-search"></i>
                     <div id="search-results" class="search-results"></div>
                 </div>
                 <button class="btn btn-primary" id="add-person-btn">
-                    <i class="fas fa-plus"></i> Új személy
+                    <i class="fas fa-plus"></i> <span class="btn-text">Új személy</span>
                 </button>
-                <span class="version-badge" title="Verzió">v:52d2c7e</span>
+                <span class="version-badge" title="Verzió">v:b65466c</span>
             </div>
         </nav>
 
@@ -97,6 +103,10 @@
                 <div class="persons-header">
                     <h2>Családtagok</h2>
                     <div class="filter-group">
+                        <div class="persons-search-box">
+                            <input type="text" id="persons-search" placeholder="Keresés név alapján...">
+                            <i class="fas fa-search"></i>
+                        </div>
                         <select id="filter-gender">
                             <option value="">Minden nem</option>
                             <option value="male">Férfi</option>
@@ -107,9 +117,16 @@
                             <option value="alive">Élő</option>
                             <option value="deceased">Elhunyt</option>
                         </select>
+                        <select id="filter-connection">
+                            <option value="">Mindenki</option>
+                            <option value="connected">Kapcsolódó (van szülő/házasság)</option>
+                            <option value="unconnected">Nem kapcsolódó (árva)</option>
+                        </select>
                         <select id="sort-by">
-                            <option value="name">Név szerint</option>
-                            <option value="birth">Születés szerint</option>
+                            <option value="name">Név szerint (A-Z)</option>
+                            <option value="name-desc">Név szerint (Z-A)</option>
+                            <option value="birth">Születés szerint (régi→új)</option>
+                            <option value="birth-desc">Születés szerint (új→régi)</option>
                             <option value="recent">Legutóbb hozzáadott</option>
                         </select>
                     </div>
@@ -130,6 +147,15 @@
                     </div>
                 </div>
                 <div id="trash-list" class="trash-list"></div>
+                
+                <!-- Adatbázis mentések szekció -->
+                <div class="backup-section">
+                    <div class="backup-header">
+                        <h3><i class="fas fa-database"></i> Adatbázis mentések</h3>
+                        <p>Import előtt automatikusan mentés készül. Innen visszaállíthatod a korábbi állapotot.</p>
+                    </div>
+                    <div id="backup-list" class="backup-list"></div>
+                </div>
             </div>
 
             <!-- Statisztikák nézet -->

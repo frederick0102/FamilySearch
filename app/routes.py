@@ -56,7 +56,11 @@ def get_person(person_id):
 
 @api_bp.route('/persons', methods=['POST'])
 def create_person():
-    """Új személy létrehozása"""
+    """Új személy létrehozása
+    
+    GRÁF-ALAPÚ MODELL: A szülő kapcsolatot a parent_family_id-n keresztül kell beállítani,
+    nem a father_id/mother_id mezőkkel. Használd a /families/<id>/children végpontot!
+    """
     data = request.get_json()
     
     person = Person(
@@ -83,8 +87,11 @@ def create_person():
         address=data.get('address'),
         biography=data.get('biography'),
         notes=data.get('notes'),
-        father_id=data.get('father_id'),
-        mother_id=data.get('mother_id'),
+        # Gráf-alapú mezők
+        parent_family_id=data.get('parent_family_id'),
+        adoptive_family_id=data.get('adoptive_family_id'),
+        is_twin=data.get('is_twin', False),
+        birth_order=data.get('birth_order'),
         custom_fields=json.dumps(data.get('custom_fields', {}))
     )
     
@@ -102,7 +109,11 @@ def create_person():
 
 @api_bp.route('/persons/<int:person_id>', methods=['PUT'])
 def update_person(person_id):
-    """Személy frissítése"""
+    """Személy frissítése
+    
+    GRÁF-ALAPÚ MODELL: A szülő kapcsolatot a parent_family_id-n keresztül kell beállítani.
+    Használd a /families/<id>/children végpontot gyerek hozzáadásához!
+    """
     person = Person.query.filter(not_deleted_filter(Person, 'person'), Person.id == person_id).first_or_404()
     data = request.get_json()
     
@@ -111,7 +122,8 @@ def update_person(person_id):
                   'gender', 'birth_place', 'birth_country', 'birth_date_approximate',
                   'death_place', 'death_country', 'death_date_approximate', 'death_cause',
                   'burial_place', 'occupation', 'education', 'religion', 'nationality',
-                  'email', 'phone', 'address', 'biography', 'notes', 'father_id', 'mother_id']:
+                  'email', 'phone', 'address', 'biography', 'notes',
+                  'parent_family_id', 'adoptive_family_id', 'is_twin', 'birth_order']:
         if field in data:
             setattr(person, field, data[field])
     
@@ -164,36 +176,65 @@ def upload_photo(person_id):
     return jsonify({'error': 'Nem megengedett fájltípus'}), 400
 
 
-# ==================== HÁZASSÁGOK API ====================
+# ==================== HÁZASSÁGOK/FAMILIES API ====================
+# A Marriage osztály a GEDCOM-szerű Family entitást reprezentálja.
+# Az URL-ek /marriages és /families alatt is elérhetők (alias).
 
 @api_bp.route('/marriages', methods=['GET'])
+@api_bp.route('/families', methods=['GET'])
 def get_marriages():
-    """Összes házasság lekérdezése"""
+    """Összes család/házasság lekérdezése"""
     marriages = Marriage.query.filter(not_deleted_filter(Marriage, 'marriage')).all()
     return jsonify([m.to_dict() for m in marriages])
 
 
+@api_bp.route('/families/<int:family_id>', methods=['GET'])
+@api_bp.route('/marriages/<int:family_id>', methods=['GET'])
+def get_family(family_id):
+    """Egy család/házasság lekérdezése részletekkel"""
+    family = Marriage.query.filter(
+        not_deleted_filter(Marriage, 'marriage'),
+        Marriage.id == family_id
+    ).first_or_404()
+    
+    result = family.to_dict()
+    # Gyerekek részletes adatai
+    result['children_details'] = [{
+        'id': c.id,
+        'name': c.full_name,
+        'birth_date': c.birth_date.isoformat() if c.birth_date else None,
+        'is_twin': c.is_twin,
+        'birth_order': c.birth_order
+    } for c in family.children]
+    return jsonify(result)
+
+
 @api_bp.route('/marriages', methods=['POST'])
+@api_bp.route('/families', methods=['POST'])
 def create_marriage():
-    """Új házasság létrehozása"""
+    """Új család/házasság létrehozása
+    
+    GEDCOM-stílusú Family: legalább egy partner kell, de mindkettő lehet NULL
+    (pl. ismeretlen apa esete). Ha mindkét partner NULL, akkor "virtuális" család.
+    """
     data = request.get_json() or {}
 
-    # Kötelező mezők és validációk
+    # Partner ID-k (nullable!)
     try:
-        person1_id = int(data.get('person1_id')) if data.get('person1_id') is not None else None
-        person2_id = int(data.get('person2_id')) if data.get('person2_id') is not None else None
+        person1_id = int(data.get('person1_id')) if data.get('person1_id') else None
+        person2_id = int(data.get('person2_id')) if data.get('person2_id') else None
     except (TypeError, ValueError):
         return jsonify({'error': 'Érvénytelen partner azonosító'}), 400
 
-    if not person1_id or not person2_id:
-        return jsonify({'error': 'Mindkét partner kötelező'}), 400
-    if person1_id == person2_id:
+    # Ugyanaz a személy nem lehet mindkét partner
+    if person1_id and person2_id and person1_id == person2_id:
         return jsonify({'error': 'A két partner nem lehet azonos személy'}), 400
 
-    person1 = Person.query.get(person1_id)
-    person2 = Person.query.get(person2_id)
-    if not person1 or not person2:
-        return jsonify({'error': 'A megadott partner(ek) nem léteznek'}), 400
+    # Partner létezés ellenőrzés (ha megadva)
+    if person1_id and not Person.query.get(person1_id):
+        return jsonify({'error': f'Partner1 (ID: {person1_id}) nem létezik'}), 400
+    if person2_id and not Person.query.get(person2_id):
+        return jsonify({'error': f'Partner2 (ID: {person2_id}) nem létezik'}), 400
 
     def parse_date(value):
         if not value:
@@ -203,10 +244,23 @@ def create_marriage():
         except ValueError:
             return None
 
+    # Status meghatározása
+    status = data.get('status', 'active')
+    if data.get('end_date') and status == 'active':
+        # Ha van end_date de nincs status, akkor az end_reason alapján
+        end_reason = data.get('end_reason', '')
+        if end_reason == 'divorce':
+            status = 'divorced'
+        elif end_reason == 'death':
+            status = 'widowed'
+        elif end_reason:
+            status = 'ended'
+
     marriage = Marriage(
         person1_id=person1_id,
         person2_id=person2_id,
         relationship_type=data.get('relationship_type', 'marriage'),
+        status=status,
         marriage_place=data.get('marriage_place'),
         end_reason=data.get('end_reason'),
         notes=data.get('notes'),
@@ -225,8 +279,9 @@ def create_marriage():
 
 
 @api_bp.route('/marriages/<int:marriage_id>', methods=['PUT'])
+@api_bp.route('/families/<int:marriage_id>', methods=['PUT'])
 def update_marriage(marriage_id):
-    """Házasság frissítése"""
+    """Család/házasság frissítése"""
     marriage = Marriage.query.filter(not_deleted_filter(Marriage, 'marriage'), Marriage.id == marriage_id).first_or_404()
     data = request.get_json()
     
@@ -238,22 +293,27 @@ def update_marriage(marriage_id):
         except ValueError:
             return None
 
-    # Partner validáció, ha érkezik
+    # Partner validáció (nullable partnerek támogatása)
     if 'person1_id' in data or 'person2_id' in data:
         try:
-            p1 = int(data.get('person1_id', marriage.person1_id))
-            p2 = int(data.get('person2_id', marriage.person2_id))
+            p1 = int(data['person1_id']) if data.get('person1_id') else None
+            p2 = int(data['person2_id']) if data.get('person2_id') else None
         except (TypeError, ValueError):
             return jsonify({'error': 'Érvénytelen partner azonosító'}), 400
 
-        if p1 == p2:
+        if p1 and p2 and p1 == p2:
             return jsonify({'error': 'A két partner nem lehet azonos személy'}), 400
-        if not Person.query.get(p1) or not Person.query.get(p2):
-            return jsonify({'error': 'A megadott partner(ek) nem léteznek'}), 400
-        marriage.person1_id = p1
-        marriage.person2_id = p2
+        if p1 and not Person.query.get(p1):
+            return jsonify({'error': f'Partner1 (ID: {p1}) nem létezik'}), 400
+        if p2 and not Person.query.get(p2):
+            return jsonify({'error': f'Partner2 (ID: {p2}) nem létezik'}), 400
+        
+        if 'person1_id' in data:
+            marriage.person1_id = p1
+        if 'person2_id' in data:
+            marriage.person2_id = p2
 
-    for field in ['relationship_type', 'marriage_place', 'end_reason', 'notes']:
+    for field in ['relationship_type', 'status', 'marriage_place', 'end_reason', 'notes']:
         if field in data:
             setattr(marriage, field, data[field])
     
@@ -272,10 +332,104 @@ def update_marriage(marriage_id):
 
 
 @api_bp.route('/marriages/<int:marriage_id>', methods=['DELETE'])
+@api_bp.route('/families/<int:marriage_id>', methods=['DELETE'])
 def delete_marriage(marriage_id):
-    """Házasság törlése"""
-    Marriage.query.get_or_404(marriage_id)
+    """Család/házasság törlése"""
+    family = Marriage.query.get_or_404(marriage_id)
+    
+    # Gyerekek parent_family_id törlése (opcionális: vagy NULL-ra állítjuk)
+    children = Person.query.filter_by(parent_family_id=marriage_id).all()
+    for child in children:
+        child.parent_family_id = None
+    
     mark_deleted('marriage', marriage_id)
+    db.session.commit()
+    return '', 204
+
+
+# ==================== FAMILY-CHILDREN API ====================
+# Gyerekek hozzárendelése családhoz (GEDCOM-stílus)
+
+@api_bp.route('/families/<int:family_id>/children', methods=['GET'])
+def get_family_children(family_id):
+    """Család gyerekeinek lekérdezése"""
+    family = Marriage.query.filter(
+        not_deleted_filter(Marriage, 'marriage'),
+        Marriage.id == family_id
+    ).first_or_404()
+    
+    children = Person.query.filter(
+        not_deleted_filter(Person, 'person'),
+        Person.parent_family_id == family_id
+    ).order_by(Person.birth_order, Person.birth_date).all()
+    
+    return jsonify([{
+        'id': c.id,
+        'name': c.full_name,
+        'birth_date': c.birth_date.isoformat() if c.birth_date else None,
+        'is_twin': c.is_twin,
+        'birth_order': c.birth_order
+    } for c in children])
+
+
+@api_bp.route('/families/<int:family_id>/children', methods=['POST'])
+def add_child_to_family(family_id):
+    """Gyerek hozzáadása családhoz
+    
+    Body: { "person_id": 123, "is_twin": false, "birth_order": 1 }
+    vagy: { "person_ids": [123, 456], "is_twin": true }  -- ikrek esetén
+    """
+    family = Marriage.query.filter(
+        not_deleted_filter(Marriage, 'marriage'),
+        Marriage.id == family_id
+    ).first_or_404()
+    
+    data = request.get_json() or {}
+    
+    # Több gyerek egyszerre (ikrek)
+    person_ids = data.get('person_ids', [])
+    if data.get('person_id'):
+        person_ids.append(data['person_id'])
+    
+    if not person_ids:
+        return jsonify({'error': 'person_id vagy person_ids kötelező'}), 400
+    
+    is_twin = data.get('is_twin', False)
+    birth_order = data.get('birth_order')
+    
+    added = []
+    for pid in person_ids:
+        person = Person.query.filter(
+            not_deleted_filter(Person, 'person'),
+            Person.id == pid
+        ).first()
+        if not person:
+            continue
+        
+        person.parent_family_id = family_id
+        person.is_twin = is_twin
+        if birth_order:
+            person.birth_order = birth_order
+        
+        added.append({'id': person.id, 'name': person.full_name})
+    
+    db.session.commit()
+    return jsonify({'added': added, 'family_id': family_id}), 201
+
+
+@api_bp.route('/families/<int:family_id>/children/<int:person_id>', methods=['DELETE'])
+def remove_child_from_family(family_id, person_id):
+    """Gyerek eltávolítása családból (nem törli a személyt!)"""
+    person = Person.query.filter(
+        not_deleted_filter(Person, 'person'),
+        Person.id == person_id,
+        Person.parent_family_id == family_id
+    ).first_or_404()
+    
+    person.parent_family_id = None
+    person.is_twin = False
+    person.birth_order = None
+    
     db.session.commit()
     return '', 204
 
@@ -385,7 +539,13 @@ def delete_document(document_id):
 
 @api_bp.route('/tree/data', methods=['GET'])
 def get_tree_data():
-    """Családfa adatok lekérdezése vizualizációhoz"""
+    """Családfa adatok lekérdezése vizualizációhoz
+    
+    GEDCOM-stílusú gráf-modell támogatása:
+    - nodes: személyek (parent_family_id-vel)
+    - links: kapcsolatok (szülő-gyerek, házasság)
+    - marriages: család/házasság entitások (Family)
+    """
     persons = Person.query.filter(not_deleted_filter(Person, 'person')).all()
     marriages = Marriage.query.filter(not_deleted_filter(Marriage, 'marriage')).all()
     
@@ -405,38 +565,45 @@ def get_tree_data():
             'photo': person.photo_path,
             'is_alive': person.is_alive,
             'age': person.age,
-            'father_id': person.father_id,
-            'mother_id': person.mother_id
+            # Gráf-alapú mezők
+            'parent_family_id': person.parent_family_id,
+            'adoptive_family_id': person.adoptive_family_id,
+            'is_twin': person.is_twin,
+            'birth_order': person.birth_order
+        })
+    
+    # Házassági kapcsolatok és Family entitások
+    person_ids = {p.id for p in persons}
+    marriage_list = []
+    
+    for marriage in marriages:
+        # Marriage/Family entitás adatai (GEDCOM-stílusú)
+        marriage_list.append({
+            'id': marriage.id,
+            'person1_id': marriage.person1_id,
+            'person2_id': marriage.person2_id,
+            'relationship_type': marriage.relationship_type,
+            'status': marriage.status,
+            'start_date': marriage.start_date.isoformat() if marriage.start_date else None,
+            'end_date': marriage.end_date.isoformat() if marriage.end_date else None,
+            'end_reason': marriage.end_reason
         })
         
-        # Szülő kapcsolatok
-        if person.father_id:
-            links.append({
-                'source': person.father_id,
-                'target': person.id,
-                'type': 'parent-child'
-            })
-        if person.mother_id:
-            links.append({
-                'source': person.mother_id,
-                'target': person.id,
-                'type': 'parent-child'
-            })
-    
-    # Házassági kapcsolatok
-    person_ids = {p.id for p in persons}
-    for marriage in marriages:
+        # Házassági link a vizualizációhoz
         if marriage.person1_id in person_ids and marriage.person2_id in person_ids:
             links.append({
                 'source': marriage.person1_id,
                 'target': marriage.person2_id,
                 'type': 'marriage',
-                'marriage_id': marriage.id
+                'marriage_id': marriage.id,
+                'status': marriage.status,
+                'relationship_type': marriage.relationship_type
             })
     
     return jsonify({
         'nodes': nodes,
-        'links': links
+        'links': links,
+        'marriages': marriage_list
     })
 
 
@@ -449,10 +616,9 @@ def get_ancestors(person_id):
         
         ancestors = [{'person': person.to_dict(), 'depth': depth}]
         
-        if person.father:
-            ancestors.extend(get_ancestors_recursive(person.father, depth + 1, max_depth))
-        if person.mother:
-            ancestors.extend(get_ancestors_recursive(person.mother, depth + 1, max_depth))
+        # GRÁF-ALAPÚ MODELL: szülők a parent_family-n keresztül
+        for parent in person.parents:
+            ancestors.extend(get_ancestors_recursive(parent, depth + 1, max_depth))
         
         return ancestors
     
@@ -567,10 +733,9 @@ def export_gedcom():
             gedcom += "1 MARR\n"
             gedcom += f"2 DATE {marriage.start_date.strftime('%d %b %Y').upper()}\n"
         
-        # Gyerekek hozzáadása
+        # Gyerekek hozzáadása (parent_family_id alapján)
         children = Person.query.filter(
-            ((Person.father_id == marriage.person1_id) | (Person.father_id == marriage.person2_id)) &
-            ((Person.mother_id == marriage.person1_id) | (Person.mother_id == marriage.person2_id))
+            Person.parent_family_id == marriage.id
         ).all()
         
         for child in children:
@@ -601,34 +766,71 @@ def export_json():
 
 @api_bp.route('/import/json', methods=['POST'])
 def import_json():
-    """Import JSON formátumból"""
+    """Import JSON formátumból - teljes adatbázis csere"""
+    import shutil
+    from pathlib import Path
+    
     data = request.get_json()
     
-    id_mapping = {}  # Régi ID -> Új ID mapping
+    # Adatbázis útvonal meghatározása
+    db_path = Path(current_app.instance_path).parent / 'data' / 'familytree.db'
+    backup_dir = Path(current_app.instance_path).parent / 'data' / 'backups'
+    backup_dir.mkdir(parents=True, exist_ok=True)
     
-    # Személyek importálása
+    # Régi adatbázis mentése időbélyeggel
+    if db_path.exists():
+        timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
+        backup_path = backup_dir / f'familytree_backup_{timestamp}.db'
+        shutil.copy2(db_path, backup_path)
+    
+    # ÖSSZES meglévő adat törlése
+    try:
+        Marriage.query.delete()
+        Event.query.delete()
+        Document.query.delete()
+        DeletedRecord.query.delete()
+        Person.query.delete()
+        db.session.commit()
+    except Exception as e:
+        db.session.rollback()
+        return jsonify({'error': f'Törlés hiba: {str(e)}'}), 500
+    
+    id_mapping = {}  # Régi ID -> Új ID mapping
+    marriage_id_mapping = {}  # Régi marriage ID -> Új marriage ID mapping
+    persons_with_parents = []  # (person, old_father_id, old_mother_id, old_parent_family_id)
+    
+    # 1. LÉPÉS: Személyek importálása szülők nélkül
     for person_data in data.get('persons', []):
         old_id = person_data.pop('id', None)
-        person_data.pop('full_name', None)
-        person_data.pop('display_name', None)
-        person_data.pop('age', None)
-        person_data.pop('is_alive', None)
-        person_data.pop('created_at', None)
-        person_data.pop('updated_at', None)
+        
+        # Számított mezők eltávolítása
+        for field in ['full_name', 'display_name', 'age', 'is_alive', 'created_at', 'updated_at']:
+            person_data.pop(field, None)
         
         # Dátumok konvertálása
         if person_data.get('birth_date'):
-            person_data['birth_date'] = datetime.fromisoformat(person_data['birth_date']).date()
+            try:
+                person_data['birth_date'] = datetime.fromisoformat(person_data['birth_date']).date()
+            except:
+                person_data['birth_date'] = None
         if person_data.get('death_date'):
-            person_data['death_date'] = datetime.fromisoformat(person_data['death_date']).date()
+            try:
+                person_data['death_date'] = datetime.fromisoformat(person_data['death_date']).date()
+            except:
+                person_data['death_date'] = None
         
-        # Egyéni mezők
-        if person_data.get('custom_fields'):
-            person_data['custom_fields'] = json.dumps(person_data['custom_fields'])
+        # Egyéni mezők - MINDIG stringgé alakítjuk ha dict
+        if 'custom_fields' in person_data:
+            if isinstance(person_data['custom_fields'], dict):
+                person_data['custom_fields'] = json.dumps(person_data['custom_fields'])
+            elif person_data['custom_fields'] is None:
+                person_data['custom_fields'] = '{}'
         
-        # Szülő ID-k átmenetileg None (később frissítjük)
-        father_id = person_data.pop('father_id', None)
-        mother_id = person_data.pop('mother_id', None)
+        # Szülő ID-k elmentése és eltávolítása (legacy és új modell)
+        old_father_id = person_data.pop('father_id', None)
+        old_mother_id = person_data.pop('mother_id', None)
+        old_parent_family_id = person_data.pop('parent_family_id', None)
+        person_data.pop('adoptive_family_id', None)  # Majd később állítjuk be
         
         person = Person(**person_data)
         db.session.add(person)
@@ -636,15 +838,98 @@ def import_json():
         
         if old_id:
             id_mapping[old_id] = person.id
+        
+        persons_with_parents.append((person, old_father_id, old_mother_id, old_parent_family_id))
     
-    # Szülő kapcsolatok frissítése
-    for person in Person.query.all():
-        # Ez egyszerűsített - production-ben komplexebb lenne
-        pass
+    # 2. LÉPÉS: Házasságok importálása (ELŐBB, mert a parent_family_id-hez kellenek)
+    for marriage_data in data.get('marriages', []):
+        old_marriage_id = marriage_data.get('id')
+        old_person1_id = marriage_data.get('person1_id')
+        old_person2_id = marriage_data.get('person2_id')
+        
+        if old_person1_id in id_mapping and old_person2_id in id_mapping:
+            # Dátumok konvertálása
+            start_date = None
+            end_date = None
+            if marriage_data.get('start_date'):
+                try:
+                    start_date = datetime.fromisoformat(marriage_data['start_date']).date()
+                except:
+                    pass
+            if marriage_data.get('end_date'):
+                try:
+                    end_date = datetime.fromisoformat(marriage_data['end_date']).date()
+                except:
+                    pass
+            
+            marriage = Marriage(
+                person1_id=id_mapping[old_person1_id],
+                person2_id=id_mapping[old_person2_id],
+                relationship_type=marriage_data.get('relationship_type', 'marriage'),
+                status=marriage_data.get('status', 'active'),
+                start_date=start_date,
+                end_date=end_date,
+                end_reason=marriage_data.get('end_reason'),
+                marriage_place=marriage_data.get('marriage_place'),
+                notes=marriage_data.get('notes')
+            )
+            db.session.add(marriage)
+            db.session.flush()
+            
+            # Marriage ID mapping mentése
+            if old_marriage_id:
+                marriage_id_mapping[old_marriage_id] = marriage.id
     
-    db.session.commit()
+    # 3. LÉPÉS: Szülő kapcsolatok frissítése az új modell szerint
+    # Segéd: Család keresése/létrehozása szülőpárhoz
+    def find_or_create_family(father_id, mother_id):
+        """Megkeresi vagy létrehozza a családot a szülőpár alapján"""
+        if not father_id or not mother_id:
+            return None
+        
+        # Keressük meg a meglévő családot
+        existing = Marriage.query.filter(
+            ((Marriage.person1_id == father_id) & (Marriage.person2_id == mother_id)) |
+            ((Marriage.person1_id == mother_id) & (Marriage.person2_id == father_id))
+        ).first()
+        
+        if existing:
+            return existing.id
+        
+        # Hozzunk létre újat
+        new_family = Marriage(
+            person1_id=father_id,
+            person2_id=mother_id,
+            relationship_type='partnership',
+            status='active'
+        )
+        db.session.add(new_family)
+        db.session.flush()
+        return new_family.id
     
-    return jsonify({'message': 'Import sikeres', 'imported_count': len(data.get('persons', []))})
+    for person, old_father_id, old_mother_id, old_parent_family_id in persons_with_parents:
+        # Ha van parent_family_id, használjuk azt
+        if old_parent_family_id and old_parent_family_id in marriage_id_mapping:
+            person.parent_family_id = marriage_id_mapping[old_parent_family_id]
+        # Ha legacy father_id/mother_id van, konvertáljuk parent_family_id-re
+        elif old_father_id and old_mother_id:
+            new_father_id = id_mapping.get(old_father_id)
+            new_mother_id = id_mapping.get(old_mother_id)
+            if new_father_id and new_mother_id:
+                person.parent_family_id = find_or_create_family(new_father_id, new_mother_id)
+    
+    try:
+        db.session.commit()
+    except Exception as e:
+        db.session.rollback()
+        return jsonify({'error': f'Mentés hiba: {str(e)}'}), 500
+    
+    return jsonify({
+        'message': 'Import sikeres',
+        'imported_persons': len(data.get('persons', [])),
+        'imported_marriages': len(data.get('marriages', [])),
+        'backup_created': str(backup_path) if db_path.exists() else None
+    })
 
 
 # ==================== KERESÉS API ====================
@@ -789,3 +1074,119 @@ def delete_permanently():
     db.session.commit()
 
     return jsonify({'status': 'deleted', 'entity_type': entity_type, 'entity_id': entity_id})
+
+
+# ==================== ADATBÁZIS BACKUP KEZELÉS ====================
+
+@api_bp.route('/backups', methods=['GET'])
+def list_backups():
+    """Adatbázis mentések listázása"""
+    from pathlib import Path
+    
+    backup_dir = Path(current_app.instance_path).parent / 'data' / 'backups'
+    
+    if not backup_dir.exists():
+        return jsonify([])
+    
+    backups = []
+    for f in sorted(backup_dir.glob('*.db'), reverse=True):
+        stat = f.stat()
+        # Fájlnévből kinyerjük a dátumot
+        # Format: familytree_backup_20260123_213900.db
+        name_parts = f.stem.split('_')
+        if len(name_parts) >= 4:
+            date_str = name_parts[2]  # 20260123
+            time_str = name_parts[3]  # 213900
+            try:
+                formatted_date = f"{date_str[:4]}-{date_str[4:6]}-{date_str[6:8]} {time_str[:2]}:{time_str[2:4]}:{time_str[4:6]}"
+            except:
+                formatted_date = str(f.name)
+        else:
+            formatted_date = str(f.name)
+        
+        backups.append({
+            'filename': f.name,
+            'path': str(f),
+            'size_kb': round(stat.st_size / 1024, 1),
+            'created_at': formatted_date,
+            'timestamp': stat.st_mtime
+        })
+    
+    return jsonify(backups)
+
+
+@api_bp.route('/backups/restore', methods=['POST'])
+def restore_backup():
+    """Adatbázis visszaállítása mentésből"""
+    import shutil
+    from pathlib import Path
+    
+    data = request.get_json()
+    filename = data.get('filename')
+    
+    if not filename:
+        return jsonify({'error': 'Nincs megadva fájlnév'}), 400
+    
+    backup_dir = Path(current_app.instance_path).parent / 'data' / 'backups'
+    backup_path = backup_dir / filename
+    
+    if not backup_path.exists():
+        return jsonify({'error': 'A backup fájl nem található'}), 404
+    
+    # Biztonsági ellenőrzés - csak .db fájlok
+    if not filename.endswith('.db'):
+        return jsonify({'error': 'Érvénytelen fájltípus'}), 400
+    
+    db_path = Path(current_app.instance_path).parent / 'data' / 'familytree.db'
+    
+    # Jelenlegi adatbázis mentése visszaállítás előtt
+    timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
+    pre_restore_backup = backup_dir / f'familytree_pre_restore_{timestamp}.db'
+    
+    try:
+        # Kapcsolat lezárása
+        db.session.remove()
+        db.engine.dispose()
+        
+        # Jelenlegi mentése
+        if db_path.exists():
+            shutil.copy2(db_path, pre_restore_backup)
+        
+        # Visszaállítás
+        shutil.copy2(backup_path, db_path)
+        
+        return jsonify({
+            'message': 'Adatbázis sikeresen visszaállítva',
+            'restored_from': filename,
+            'pre_restore_backup': pre_restore_backup.name
+        })
+    except Exception as e:
+        return jsonify({'error': f'Visszaállítási hiba: {str(e)}'}), 500
+
+
+@api_bp.route('/backups/delete', methods=['POST'])
+def delete_backup():
+    """Backup fájl törlése"""
+    from pathlib import Path
+    
+    data = request.get_json()
+    filename = data.get('filename')
+    
+    if not filename:
+        return jsonify({'error': 'Nincs megadva fájlnév'}), 400
+    
+    backup_dir = Path(current_app.instance_path).parent / 'data' / 'backups'
+    backup_path = backup_dir / filename
+    
+    if not backup_path.exists():
+        return jsonify({'error': 'A backup fájl nem található'}), 404
+    
+    # Biztonsági ellenőrzés
+    if not filename.endswith('.db') or '..' in filename:
+        return jsonify({'error': 'Érvénytelen fájlnév'}), 400
+    
+    try:
+        backup_path.unlink()
+        return jsonify({'message': 'Backup törölve', 'filename': filename})
+    except Exception as e:
+        return jsonify({'error': f'Törlési hiba: {str(e)}'}), 500

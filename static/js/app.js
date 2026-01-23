@@ -81,8 +81,26 @@ function showNotification(message, type = 'info') {
 function initNavigation() {
     const navBtns = document.querySelectorAll('.nav-btn');
     const views = document.querySelectorAll('.view');
+    const navbarToggle = document.getElementById('navbar-toggle');
+    const navbarMenu = document.getElementById('navbar-menu');
     
     console.log('Navigation init - found buttons:', navBtns.length, 'views:', views.length);
+    
+    // Mobil menü kapcsoló
+    if (navbarToggle && navbarMenu) {
+        navbarToggle.addEventListener('click', () => {
+            navbarMenu.classList.toggle('show');
+            // Ikon váltás
+            const icon = navbarToggle.querySelector('i');
+            if (navbarMenu.classList.contains('show')) {
+                icon.classList.remove('fa-bars');
+                icon.classList.add('fa-times');
+            } else {
+                icon.classList.remove('fa-times');
+                icon.classList.add('fa-bars');
+            }
+        });
+    }
     
     navBtns.forEach(btn => {
         btn.addEventListener('click', async () => {
@@ -103,6 +121,14 @@ function initNavigation() {
                 console.error('View not found:', `${viewId}-view`);
             }
             
+            // Mobil menü bezárása nézet váltáskor
+            if (navbarMenu && navbarMenu.classList.contains('show')) {
+                navbarMenu.classList.remove('show');
+                const icon = navbarToggle.querySelector('i');
+                icon.classList.remove('fa-times');
+                icon.classList.add('fa-bars');
+            }
+            
             // Adatok frissítése nézet váltáskor
             try {
                 if (viewId === 'persons') await loadPersonsList();
@@ -121,6 +147,7 @@ function initNavigation() {
 async function loadPersonsList() {
     try {
         persons = await API.get('/persons');
+        marriages = await API.get('/marriages');  // Kell a kapcsolódás szűréshez
         renderPersonsList();
     } catch (error) {
         showNotification('Hiba az adatok betöltésekor', 'error');
@@ -147,9 +174,25 @@ function renderPersonsList() {
     // Szűrés
     const genderFilter = document.getElementById('filter-gender').value;
     const statusFilter = document.getElementById('filter-status').value;
+    const connectionFilter = document.getElementById('filter-connection')?.value || '';
+    const searchQuery = document.getElementById('persons-search')?.value?.toLowerCase() || '';
     const sortBy = document.getElementById('sort-by').value;
     
     let filtered = [...persons];
+    
+    // Szöveges keresés
+    if (searchQuery.length >= 2) {
+        filtered = filtered.filter(p => {
+            const fullName = (p.full_name || '').toLowerCase();
+            const displayName = (p.display_name || '').toLowerCase();
+            const maidenName = (p.maiden_name || '').toLowerCase();
+            const nickname = (p.nickname || '').toLowerCase();
+            return fullName.includes(searchQuery) || 
+                   displayName.includes(searchQuery) ||
+                   maidenName.includes(searchQuery) ||
+                   nickname.includes(searchQuery);
+        });
+    }
     
     if (genderFilter) {
         filtered = filtered.filter(p => p.gender === genderFilter);
@@ -161,17 +204,56 @@ function renderPersonsList() {
         filtered = filtered.filter(p => !p.is_alive);
     }
     
+    // Kapcsolódás szűrés
+    if (connectionFilter === 'connected') {
+        // Van szülője (parent_family_id) VAGY van házassága
+        const personsWithMarriage = new Set();
+        marriages.forEach(m => {
+            personsWithMarriage.add(m.person1_id);
+            personsWithMarriage.add(m.person2_id);
+        });
+        filtered = filtered.filter(p => p.parent_family_id || personsWithMarriage.has(p.id));
+    } else if (connectionFilter === 'unconnected') {
+        // Nincs szülője ÉS nincs házassága
+        const personsWithMarriage = new Set();
+        marriages.forEach(m => {
+            personsWithMarriage.add(m.person1_id);
+            personsWithMarriage.add(m.person2_id);
+        });
+        filtered = filtered.filter(p => !p.parent_family_id && !personsWithMarriage.has(p.id));
+    }
+    
     // Rendezés
     if (sortBy === 'name') {
-        filtered.sort((a, b) => a.last_name.localeCompare(b.last_name));
+        filtered.sort((a, b) => (a.last_name || '').localeCompare(b.last_name || '', 'hu'));
+    } else if (sortBy === 'name-desc') {
+        filtered.sort((a, b) => (b.last_name || '').localeCompare(a.last_name || '', 'hu'));
     } else if (sortBy === 'birth') {
         filtered.sort((a, b) => {
             if (!a.birth_date) return 1;
             if (!b.birth_date) return -1;
             return a.birth_date.localeCompare(b.birth_date);
         });
+    } else if (sortBy === 'birth-desc') {
+        filtered.sort((a, b) => {
+            if (!a.birth_date) return 1;
+            if (!b.birth_date) return -1;
+            return b.birth_date.localeCompare(a.birth_date);
+        });
     } else if (sortBy === 'recent') {
         filtered.sort((a, b) => b.id - a.id);
+    }
+    
+    // Üres keresési eredmény
+    if (filtered.length === 0) {
+        grid.innerHTML = `
+            <div class="empty-state">
+                <i class="fas fa-search"></i>
+                <h3>Nincs találat</h3>
+                <p>A keresési feltételeknek megfelelő személy nem található.</p>
+            </div>
+        `;
+        return;
     }
     
     grid.innerHTML = filtered.map(person => `
@@ -201,6 +283,8 @@ async function loadTrash() {
     try {
         trash = await API.get('/trash');
         renderTrash();
+        // Backup-ok betöltése is
+        await loadBackups();
     } catch (error) {
         showNotification('Hiba a lomtár betöltésekor', 'error');
     }
@@ -308,6 +392,87 @@ async function deletePermanently(entityType, entityId) {
     });
 }
 
+// ==================== ADATBÁZIS MENTÉSEK ====================
+async function loadBackups() {
+    try {
+        const backups = await API.get('/backups');
+        renderBackups(backups);
+    } catch (error) {
+        console.error('Backup lista betöltési hiba:', error);
+    }
+}
+
+function renderBackups(backups) {
+    const container = document.getElementById('backup-list');
+    if (!container) return;
+
+    if (!backups || !backups.length) {
+        container.innerHTML = `
+            <div class="backup-empty">
+                <i class="fas fa-database"></i>
+                <p>Nincs elérhető adatbázis mentés</p>
+                <small>Import után automatikusan készül mentés a korábbi adatokról.</small>
+            </div>
+        `;
+        return;
+    }
+
+    container.innerHTML = backups.map(backup => `
+        <div class="backup-card">
+            <div class="backup-info">
+                <div class="backup-name">
+                    <i class="fas fa-file-archive"></i>
+                    ${backup.filename}
+                </div>
+                <div class="backup-meta">
+                    <span><i class="fas fa-calendar"></i> ${backup.created_at}</span>
+                    <span><i class="fas fa-weight"></i> ${backup.size_kb} KB</span>
+                </div>
+            </div>
+            <div class="backup-actions">
+                <button class="btn btn-success" onclick="restoreBackup('${backup.filename}')">
+                    <i class="fas fa-undo"></i> Visszaállítás
+                </button>
+                <button class="btn btn-danger" onclick="deleteBackup('${backup.filename}')">
+                    <i class="fas fa-trash"></i>
+                </button>
+            </div>
+        </div>
+    `).join('');
+}
+
+async function restoreBackup(filename) {
+    showConfirm(
+        `⚠️ FIGYELEM!\n\nEz visszaállítja az adatbázist a "${filename}" mentésből.\n\nA jelenlegi adatokról automatikusan mentés készül.\n\nBiztosan folytatod?`,
+        async () => {
+            try {
+                const result = await API.post('/backups/restore', { filename });
+                showNotification(result.message || 'Adatbázis visszaállítva', 'success');
+                // Oldal újratöltése az új adatok megjelenítéséhez
+                setTimeout(() => location.reload(), 1000);
+            } catch (error) {
+                showNotification('Visszaállítási hiba: ' + (error.message || 'Ismeretlen hiba'), 'error');
+            }
+        },
+        { text: 'Visszaállítás', className: 'btn-success' }
+    );
+}
+
+async function deleteBackup(filename) {
+    showConfirm(
+        `Biztosan törölni szeretnéd a "${filename}" mentést?\n\nEz a művelet nem visszavonható!`,
+        async () => {
+            try {
+                await API.post('/backups/delete', { filename });
+                showNotification('Mentés törölve', 'success');
+                await loadBackups();
+            } catch (error) {
+                showNotification('Törlési hiba', 'error');
+            }
+        }
+    );
+}
+
 // ==================== SZEMÉLY MODAL ====================
 async function openPersonModal(personId = null) {
     currentPersonId = personId;
@@ -328,7 +493,7 @@ async function openPersonModal(personId = null) {
         
         try {
             const person = await API.get(`/persons/${personId}`);
-            fillPersonForm(person);
+            await fillPersonForm(person);
             await loadPersonRelations(personId);
         } catch (error) {
             showNotification('Hiba az adatok betöltésekor', 'error');
@@ -352,7 +517,7 @@ async function openPersonModal(personId = null) {
     modal.classList.add('show');
 }
 
-function fillPersonForm(person) {
+async function fillPersonForm(person) {
     document.getElementById('person-id').value = person.id;
     document.getElementById('first_name').value = person.first_name || '';
     document.getElementById('last_name').value = person.last_name || '';
@@ -385,8 +550,34 @@ function fillPersonForm(person) {
     document.getElementById('address').value = person.address || '';
     document.getElementById('biography').value = person.biography || '';
     document.getElementById('notes').value = person.notes || '';
-    document.getElementById('father_id').value = person.father_id || '';
-    document.getElementById('mother_id').value = person.mother_id || '';
+    
+    // Szülők beállítása parent_family_id alapján (gráf modell)
+    let fatherId = '';
+    let motherId = '';
+    
+    if (person.parent_family_id) {
+        // Keressük meg a családot és annak tagjait
+        try {
+            const families = await API.get('/families');
+            const parentFamily = families.find(f => f.id === person.parent_family_id);
+            if (parentFamily) {
+                // A szülőket a nemük alapján azonosítjuk
+                const p1 = persons.find(p => p.id === parentFamily.person1_id);
+                const p2 = persons.find(p => p.id === parentFamily.person2_id);
+                
+                if (p1 && p1.gender === 'male') fatherId = p1.id;
+                else if (p1 && p1.gender === 'female') motherId = p1.id;
+                
+                if (p2 && p2.gender === 'male') fatherId = p2.id;
+                else if (p2 && p2.gender === 'female') motherId = p2.id;
+            }
+        } catch (error) {
+            console.error('Szülő család lekérése sikertelen:', error);
+        }
+    }
+    
+    document.getElementById('father_id').value = fatherId;
+    document.getElementById('mother_id').value = motherId;
     document.getElementById('preview-photo').src = person.photo_path || '/static/img/placeholder-avatar.svg';
 }
 
@@ -487,6 +678,44 @@ async function savePerson() {
     const form = document.getElementById('person-form');
     const formData = new FormData(form);
     
+    // Szülő ID-k lekérése (még mindig az űrlapról jönnek)
+    const fatherId = formData.get('father_id') ? parseInt(formData.get('father_id')) : null;
+    const motherId = formData.get('mother_id') ? parseInt(formData.get('mother_id')) : null;
+    
+    // parent_family_id meghatározása a szülők alapján
+    let parentFamilyId = null;
+    
+    if (fatherId && motherId) {
+        // Mindkét szülő meg van adva - keressük vagy hozzuk létre a családot
+        try {
+            const families = await API.get('/families');
+            // Keresünk létező családot ezzel a két szülővel
+            const existingFamily = families.find(f => 
+                (f.person1_id === fatherId && f.person2_id === motherId) ||
+                (f.person1_id === motherId && f.person2_id === fatherId)
+            );
+            
+            if (existingFamily) {
+                parentFamilyId = existingFamily.id;
+            } else {
+                // Nincs ilyen család, létrehozzuk
+                const newFamily = await API.post('/families', {
+                    person1_id: fatherId,
+                    person2_id: motherId,
+                    relationship_type: 'partnership',
+                    status: 'active'
+                });
+                parentFamilyId = newFamily.id;
+            }
+        } catch (error) {
+            console.error('Család keresése/létrehozása sikertelen:', error);
+        }
+    } else if (fatherId || motherId) {
+        // Csak egy szülő - egyelőre nem hozunk létre családot (egyedülálló szülő esete)
+        // TODO: Lehetne kezelni egyszülős családokat is
+        showNotification('Mindkét szülőt válaszd ki a családfa kapcsolathoz!', 'warning');
+    }
+    
     const data = {
         first_name: formData.get('first_name'),
         last_name: formData.get('last_name'),
@@ -512,8 +741,8 @@ async function savePerson() {
         address: formData.get('address'),
         biography: formData.get('biography'),
         notes: formData.get('notes'),
-        father_id: formData.get('father_id') || null,
-        mother_id: formData.get('mother_id') || null
+        // Gráf-alapú modell: parent_family_id használata
+        parent_family_id: parentFamilyId
     };
 
     if (!data.gender) {
@@ -1006,11 +1235,35 @@ async function importJSON(file) {
     try {
         const text = await file.text();
         const data = JSON.parse(text);
-        await API.post('/import/json', data);
-        showNotification('Import sikeres', 'success');
+        
+        // Számoljuk meg hány személy és házasság van az importálandó fájlban
+        const personCount = data.persons?.length || 0;
+        const marriageCount = data.marriages?.length || 0;
+        
+        // Megerősítő kérdés
+        const confirmed = confirm(
+            `⚠️ FIGYELEM!\n\n` +
+            `Az import FELÜLÍRJA az összes meglévő adatot!\n\n` +
+            `Importálandó:\n` +
+            `  • ${personCount} személy\n` +
+            `  • ${marriageCount} házasság\n\n` +
+            `A régi adatbázisról automatikusan mentés készül.\n\n` +
+            `Biztosan folytatod?`
+        );
+        
+        if (!confirmed) {
+            showNotification('Import megszakítva', 'info');
+            return;
+        }
+        
+        const result = await API.post('/import/json', data);
+        showNotification(
+            `Import sikeres! ${result.imported_persons || 0} személy, ${result.imported_marriages || 0} házasság`,
+            'success'
+        );
         location.reload();
     } catch (error) {
-        showNotification('Import hiba', 'error');
+        showNotification('Import hiba: ' + (error.message || 'Ismeretlen hiba'), 'error');
     }
 }
 
@@ -1139,9 +1392,21 @@ function initTabs() {
 
 // ==================== SZŰRŐK ====================
 function initFilters() {
-    ['filter-gender', 'filter-status', 'sort-by'].forEach(id => {
-        document.getElementById(id).addEventListener('change', renderPersonsList);
+    // Dropdown szűrők
+    ['filter-gender', 'filter-status', 'filter-connection', 'sort-by'].forEach(id => {
+        const el = document.getElementById(id);
+        if (el) el.addEventListener('change', renderPersonsList);
     });
+    
+    // Keresőmező valós időben
+    const searchInput = document.getElementById('persons-search');
+    if (searchInput) {
+        let debounceTimer;
+        searchInput.addEventListener('input', () => {
+            clearTimeout(debounceTimer);
+            debounceTimer = setTimeout(renderPersonsList, 300);
+        });
+    }
 }
 
 // ==================== SEGÉDFÜGGVÉNYEK ====================
@@ -1221,6 +1486,23 @@ function initDatePickers() {
     datePickers.eventDate = flatpickr('#event-date', dateConfig);
 }
 
+// ==================== SÖTÉT MÓD KEZELÉSE ====================
+function initThemeToggle() {
+    const toggle = document.getElementById('theme-toggle');
+    
+    // Mentett téma betöltése
+    const savedTheme = localStorage.getItem('theme') || 'light';
+    document.documentElement.setAttribute('data-theme', savedTheme);
+    
+    toggle.addEventListener('click', () => {
+        const currentTheme = document.documentElement.getAttribute('data-theme');
+        const newTheme = currentTheme === 'dark' ? 'light' : 'dark';
+        
+        document.documentElement.setAttribute('data-theme', newTheme);
+        localStorage.setItem('theme', newTheme);
+    });
+}
+
 document.addEventListener('DOMContentLoaded', async () => {
     initNavigation();
     initModals();
@@ -1228,6 +1510,7 @@ document.addEventListener('DOMContentLoaded', async () => {
     initFilters();
     initSearch();
     initDatePickers();
+    initThemeToggle();
     
     // Adatok betöltése
     await loadSettings();

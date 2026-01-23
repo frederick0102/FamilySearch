@@ -56,13 +56,27 @@ class Person(db.Model):
     # Egyéni mezők (JSON formátumban)
     custom_fields = db.Column(db.Text)  # JSON string egyéni mezőkhöz
     
-    # Kapcsolatok - szülők
+    # ========== KAPCSOLATOK - ÚJ GRÁF-ALAPÚ MODELL ==========
+    
+    # A család ID-ja, ahol ez a személy GYEREKKÉNT szerepel
+    # Ez a KULCS a gráf-alapú modellhez!
+    parent_family_id = db.Column(db.Integer, db.ForeignKey('marriages.id'))
+    
+    # Örökbefogadó család (opcionális)
+    adoptive_family_id = db.Column(db.Integer, db.ForeignKey('marriages.id'))
+    
+    # Iker és születési sorrend
+    is_twin = db.Column(db.Boolean, default=False)
+    birth_order = db.Column(db.Integer)
+    
+    # DEPRECATED - Legacy mezők (már nem használjuk, de az oszlopok maradnak a DB-ben)
+    # Az új modell a parent_family_id-t használja!
     father_id = db.Column(db.Integer, db.ForeignKey('persons.id'))
     mother_id = db.Column(db.Integer, db.ForeignKey('persons.id'))
     
-    # Kapcsolatok definiálása
-    father = db.relationship('Person', foreign_keys=[father_id], remote_side=[id], backref='children_as_father')
-    mother = db.relationship('Person', foreign_keys=[mother_id], remote_side=[id], backref='children_as_mother')
+    # ========== GRÁF-ALAPÚ KAPCSOLATOK ==========
+    parent_family = db.relationship('Marriage', foreign_keys=[parent_family_id], backref='biological_children')
+    adoptive_family = db.relationship('Marriage', foreign_keys=[adoptive_family_id], backref='adopted_children')
     
     @property
     def full_name(self):
@@ -95,14 +109,89 @@ class Person(db.Model):
         return self.death_date is None
     
     @property
+    def spouse_families(self):
+        """Visszaadja az összes családot, ahol ez a személy partner"""
+        from app.models import Marriage
+        return Marriage.query.filter(
+            (Marriage.person1_id == self.id) | (Marriage.person2_id == self.id)
+        ).all()
+    
+    @property
     def children(self):
-        """Visszaadja a személy összes gyermekét"""
-        if self.gender == 'male':
-            return self.children_as_father
-        elif self.gender == 'female':
-            return self.children_as_mother
-        else:
-            return list(set(self.children_as_father + self.children_as_mother))
+        """
+        Visszaadja a személy összes gyermekét.
+        GRÁF-ALAPÚ MODELL: a gyerekek a családokon (Family) keresztül kapcsolódnak.
+        """
+        children = []
+        children_ids = set()
+        
+        for family in self.spouse_families:
+            for child in family.biological_children:
+                if child.id not in children_ids:
+                    children_ids.add(child.id)
+                    children.append(child)
+        
+        return children
+    
+    @property
+    def parents(self):
+        """
+        Visszaadja a személy szüleit.
+        GRÁF-ALAPÚ MODELL: a szülők a parent_family-n keresztül érhetők el.
+        """
+        parents = []
+        
+        if self.parent_family:
+            if self.parent_family.person1:
+                parents.append(self.parent_family.person1)
+            if self.parent_family.person2:
+                parents.append(self.parent_family.person2)
+        
+        return parents
+    
+    @property
+    def siblings(self):
+        """
+        Visszaadja a személy testvéreit (teljes testvérek).
+        GRÁF-ALAPÚ MODELL: ugyanabból a családból származó gyerekek.
+        """
+        if not self.parent_family:
+            return []
+        
+        siblings = []
+        for child in self.parent_family.biological_children:
+            if child.id != self.id:
+                siblings.append(child)
+        
+        return siblings
+    
+    @property
+    def half_siblings(self):
+        """
+        Visszaadja a féltestvéreket (egy közös szülő).
+        GRÁF-ALAPÚ MODELL: más családból származó gyerekek, de közös szülővel.
+        """
+        if not self.parent_family:
+            return []
+        
+        half_sibs = []
+        parent_ids = [self.parent_family.person1_id, self.parent_family.person2_id]
+        parent_ids = [pid for pid in parent_ids if pid]
+        
+        for parent_id in parent_ids:
+            parent = Person.query.get(parent_id)
+            if not parent:
+                continue
+            
+            for child in parent.children:
+                if child.id == self.id:
+                    continue
+                if child in self.siblings:
+                    continue  # Teljes testvér, nem féltestvér
+                if child not in half_sibs:
+                    half_sibs.append(child)
+        
+        return half_sibs
     
     def to_dict(self):
         import json
@@ -136,8 +225,15 @@ class Person(db.Model):
             'biography': self.biography,
             'notes': self.notes,
             'photo_path': self.photo_path,
-            'father_id': self.father_id,
-            'mother_id': self.mother_id,
+            # Gráf-alapú mezők
+            'parent_family_id': self.parent_family_id,
+            'adoptive_family_id': self.adoptive_family_id,
+            'is_twin': self.is_twin,
+            'birth_order': self.birth_order,
+            'spouse_family_ids': [f.id for f in self.spouse_families],
+            # Szülők (gráf-alapú modellből)
+            'parents': [{'id': p.id, 'name': p.full_name} for p in self.parents],
+            # Számított mezők
             'age': self.age,
             'is_alive': self.is_alive,
             'custom_fields': json.loads(self.custom_fields) if self.custom_fields else {},
@@ -147,22 +243,37 @@ class Person(db.Model):
 
 
 class Marriage(db.Model):
-    """Házasságok és partnerkapcsolatok"""
+    """
+    FAMILY (Család/Kapcsolat) - GEDCOM-szerű gráf-alapú modell
+    
+    Ez egy virtuális csomópont, amely összeköti a partnereket és gyerekeket.
+    A gyerekek NEM közvetlenül a szülőkhöz kapcsolódnak, hanem ehhez a Family-hoz!
+    
+    Megjegyzés: A tábla neve 'marriages' marad a backward compatibility miatt,
+    de a logika Family-központú.
+    """
     __tablename__ = 'marriages'
     
     id = db.Column(db.Integer, primary_key=True)
     
-    # Partnerek
-    person1_id = db.Column(db.Integer, db.ForeignKey('persons.id'), nullable=False)
-    person2_id = db.Column(db.Integer, db.ForeignKey('persons.id'), nullable=False)
+    # ========== PARTNEREK ==========
+    # Partner1 és Partner2 - NEM "apa" és "anya"!
+    # Így kezelhető: azonos nemű párok, ismeretlen szülő, stb.
+    person1_id = db.Column(db.Integer, db.ForeignKey('persons.id'), nullable=True)  # Lehet NULL: ismeretlen szülő
+    person2_id = db.Column(db.Integer, db.ForeignKey('persons.id'), nullable=True)  # Lehet NULL: egyedülálló szülő
     
-    # Kapcsolat típusa
-    relationship_type = db.Column(db.String(50), default='marriage')  # marriage, partnership, engagement
+    # ========== KAPCSOLAT TÍPUSA ==========
+    relationship_type = db.Column(db.String(50), default='marriage')
+    # Értékek: marriage, civil_partnership, partnership, engagement, relationship, one_night, unknown
     
-    # Dátumok
-    start_date = db.Column(db.Date)  # Házasságkötés dátuma
-    end_date = db.Column(db.Date)  # Válás/özvegység dátuma
-    end_reason = db.Column(db.String(50))  # divorce, death, annulment
+    # ========== STÁTUSZ ==========
+    status = db.Column(db.String(50), default='active')
+    # Értékek: active, divorced, widowed, separated, annulled, ended
+    
+    # ========== DÁTUMOK ==========
+    start_date = db.Column(db.Date)      # Házasságkötés dátuma
+    end_date = db.Column(db.Date)        # Válás/halálozás dátuma
+    end_reason = db.Column(db.String(50))  # divorce, death, annulment, separation
     
     # Helyszín
     marriage_place = db.Column(db.String(200))
@@ -171,8 +282,29 @@ class Marriage(db.Model):
     notes = db.Column(db.Text)
     
     # Kapcsolatok
-    person1 = db.relationship('Person', foreign_keys=[person1_id], backref='marriages_as_person1')
-    person2 = db.relationship('Person', foreign_keys=[person2_id], backref='marriages_as_person2')
+    person1 = db.relationship('Person', foreign_keys=[person1_id], backref='families_as_partner1')
+    person2 = db.relationship('Person', foreign_keys=[person2_id], backref='families_as_partner2')
+    
+    @property
+    def children(self):
+        """
+        A családhoz tartozó gyerekek lekérdezése.
+        Gyerek = olyan Person, akinek parent_family_id == self.id
+        """
+        return Person.query.filter_by(parent_family_id=self.id).all()
+    
+    @property
+    def partner_ids(self):
+        """Mindkét partner ID-ja listában"""
+        return [pid for pid in [self.person1_id, self.person2_id] if pid]
+    
+    def get_other_partner(self, person_id):
+        """Visszaadja a másik partner ID-ját"""
+        if self.person1_id == person_id:
+            return self.person2_id
+        elif self.person2_id == person_id:
+            return self.person1_id
+        return None
     
     def to_dict(self):
         return {
@@ -182,12 +314,25 @@ class Marriage(db.Model):
             'person1_name': self.person1.full_name if self.person1 else None,
             'person2_name': self.person2.full_name if self.person2 else None,
             'relationship_type': self.relationship_type,
+            'status': self.status or 'active',
             'start_date': self.start_date.isoformat() if self.start_date else None,
             'end_date': self.end_date.isoformat() if self.end_date else None,
             'end_reason': self.end_reason,
             'marriage_place': self.marriage_place,
-            'notes': self.notes
+            'notes': self.notes,
+            'children_ids': [c.id for c in self.children],
+            'children': [{'id': c.id, 'name': c.full_name} for c in self.children]
         }
+
+
+# Társító tábla: gyerek-család kapcsolat (örökbefogadáshoz)
+family_children = db.Table('family_children',
+    db.Column('family_id', db.Integer, db.ForeignKey('marriages.id'), primary_key=True),
+    db.Column('person_id', db.Integer, db.ForeignKey('persons.id'), primary_key=True),
+    db.Column('relationship_type', db.String(50), default='biological'),  # biological, adopted, foster
+    db.Column('birth_order', db.Integer),
+    db.Column('is_twin', db.Boolean, default=False)
+)
 
 
 class Event(db.Model):
