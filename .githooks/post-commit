@@ -1,0 +1,21 @@
+#!/bin/bash
+# post-commit hook: Frissíti a verziószámot az új commit ID-vel
+
+COMMIT_HASH=$(git rev-parse --short HEAD)
+INDEX_FILE="templates/index.html"
+
+# Frissítjük a verziószámot az index.html-ben
+if [ -f "$INDEX_FILE" ]; then
+    # macOS és Linux kompatibilis sed
+    if [[ "$OSTYPE" == "darwin"* ]]; then
+        sed -i '' "s/v:[a-f0-9]\{7\}/v:$COMMIT_HASH/g" "$INDEX_FILE"
+    else
+        sed -i "s/v:[a-f0-9]\{7\}/v:$COMMIT_HASH/g" "$INDEX_FILE"
+    fi
+    
+    # Ha változott, automatikusan hozzáadjuk a következő commithoz
+    if ! git diff --quiet "$INDEX_FILE"; then
+        git add "$INDEX_FILE"
+        git commit --amend --no-edit --no-verify
+    fi
+fi

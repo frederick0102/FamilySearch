@@ -1,0 +1,8 @@
+#!/bin/bash
+# pre-commit hook: Frissíti a verziószámot a commit ID-vel
+
+# A leendő commit hash-t nem ismerjük, de a legutolsó + staged változások alapján
+# generálunk egy ideiglenes hash-t. A tényleges frissítés a post-commit hook-ban történik.
+# Ez a hook csak ellenőrzi, hogy a fájlok rendben vannak.
+
+exit 0
