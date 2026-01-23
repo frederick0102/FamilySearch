@@ -471,10 +471,13 @@ function buildHierarchy() {
     if (!rootId) return null;
     
     // Node map létrehozása - FONTOS: minden node csak EGYSZER szerepel
-    const nodeMap = new Map(treeData.nodes.map(n => [n.id, { ...n, children: [] }]));
+    const nodeMap = new Map(treeData.nodes.map(n => [n.id, { ...n, children: [], partnerOnly: false }]));
     
     // Már hozzáadott partnerek nyilvántartása (duplikáció elkerülése)
     const addedAsPartner = new Set(); // "parentId-partnerId" formátumban
+    
+    // Partner kapcsolatok: ki kinek a partnere (a pozícionáláshoz)
+    const partnerOf = new Map(); // partnerId -> parentId (akihez hozzá van adva)
 
     // Segédfüggvény: gyermek hozzáadása duplikáció nélkül
     const addChild = (parentId, childId, options = {}) => {
@@ -484,7 +487,7 @@ function buildHierarchy() {
         const parent = nodeMap.get(parentId);
         const child = nodeMap.get(childId);
         
-        // Már hozzá van adva?
+        // Már hozzá van adva ehhez a szülőhöz?
         if (parent.children.some(c => c.id === child.id)) return false;
         
         // Partnerként duplikáció ellenőrzés
@@ -492,10 +495,12 @@ function buildHierarchy() {
             const key = `${parentId}-${childId}`;
             if (addedAsPartner.has(key)) return false;
             addedAsPartner.add(key);
-            parent.children.push({ ...child, partnerOnly: true });
-        } else {
-            parent.children.push(child);
+            // Az EREDETI node-ot adjuk hozzá, csak megjelöljük partnerként
+            child.partnerOnly = true;
+            partnerOf.set(childId, parentId);
         }
+        
+        parent.children.push(child);
         return true;
     };
 
@@ -549,6 +554,7 @@ function buildHierarchy() {
 
     // 4. LÉPÉS: Házasságok hozzáadása (ahol NINCS közös gyerek)
     // Ezek a "csak házastársak" - pl. új férj
+    // Az új partner ahhoz a személyhez kerül, aki már a fában van
     treeData.links
         .filter(l => l.type === 'marriage')
         .forEach(link => {
@@ -559,18 +565,25 @@ function buildHierarchy() {
             // Ha már szülőpárként hozzáadtuk, kihagyjuk
             if (parentPairs.has(key)) return;
             
-            const a = nodeMap.get(link.source);
-            const b = nodeMap.get(link.target);
-            if (!a || !b) return;
+            const sourceId = link.source;
+            const targetId = link.target;
             
-            // Ha az egyik már a fában van, a másikat partnerként hozzáadjuk
-            if (visited.has(a.id) && !visited.has(b.id)) {
-                if (addChild(a.id, b.id, { partnerOnly: true })) {
-                    visited.add(b.id);
+            // Ha az egyik már a fában van, a másikat partnerként hozzáadjuk HOZZÁ
+            // Fontos: ahhoz adjuk hozzá, aki MÁR a fában van
+            if (visited.has(sourceId) && !visited.has(targetId)) {
+                // source a fában van, target-et hozzáadjuk source-hoz
+                // DE! A source lehet, hogy partnerként van a fában, nem közvetlenül
+                // Meg kell keresni, hol van a source, és oda adjuk hozzá a target-et
+                
+                // Keressük meg a source-ot a fában és adjuk hozzá neki a target-et
+                const sourceNode = nodeMap.get(sourceId);
+                if (sourceNode && addChild(sourceId, targetId, { partnerOnly: true })) {
+                    visited.add(targetId);
                 }
-            } else if (visited.has(b.id) && !visited.has(a.id)) {
-                if (addChild(b.id, a.id, { partnerOnly: true })) {
-                    visited.add(a.id);
+            } else if (visited.has(targetId) && !visited.has(sourceId)) {
+                const targetNode = nodeMap.get(targetId);
+                if (targetNode && addChild(targetId, sourceId, { partnerOnly: true })) {
+                    visited.add(sourceId);
                 }
             }
         });
