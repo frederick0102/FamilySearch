@@ -75,6 +75,298 @@
     stroke: #5a6f8c !important;
 }
 
+/* Sötét mód - Fülek és form elemek */
+[data-theme="dark"] .tab-btn {
+    background: #2d3a5c;
+    color: var(--text-color);
+}
+
+[data-theme="dark"] .tab-btn:hover {
+    background: #3d4a6c;
+}
+
+[data-theme="dark"] .tab-btn.active {
+    background: var(--primary-color);
+    color: white;
+}
+
+/* Sötét mód - Label-ek */
+[data-theme="dark"] label {
+    color: var(--text-color);
+}
+
+/* Sötét mód - Gombok */
+[data-theme="dark"] .btn-secondary {
+    background: #3d4a6c;
+    color: var(--text-color);
+    border-color: #4d5a7c;
+}
+
+[data-theme="dark"] .btn-secondary:hover {
+    background: #4d5a7c;
+}
+
+/* Sötét mód - Törlés és egyéb UI elemek */
+[data-theme="dark"] .delete-btn,
+[data-theme="dark"] .remove-btn {
+    color: #ff6b6b;
+}
+
+/* Sötét mód - Listák és kártyák */
+[data-theme="dark"] .list-item,
+[data-theme="dark"] .card,
+[data-theme="dark"] .info-card {
+    background: var(--card-bg);
+    color: var(--text-color);
+}
+
+/* Sötét mód - Szekciók címei */
+[data-theme="dark"] h1,
+[data-theme="dark"] h2,
+[data-theme="dark"] h3,
+[data-theme="dark"] h4,
+[data-theme="dark"] h5,
+[data-theme="dark"] h6 {
+    color: var(--text-color);
+}
+
+/* Sötét mód - Szöveges tartalom */
+[data-theme="dark"] p,
+[data-theme="dark"] span,
+[data-theme="dark"] div {
+    color: inherit;
+}
+
+/* Sötét mód - Táblázatok */
+[data-theme="dark"] table,
+[data-theme="dark"] th,
+[data-theme="dark"] td {
+    color: var(--text-color);
+    border-color: var(--border-color);
+}
+
+[data-theme="dark"] th {
+    background: #2d3a5c;
+}
+
+[data-theme="dark"] tr:nth-child(even) {
+    background: rgba(255,255,255,0.05);
+}
+
+/* Sötét mód - Modal és dialog */
+[data-theme="dark"] .modal-header {
+    border-bottom-color: var(--border-color);
+}
+
+[data-theme="dark"] .modal-footer {
+    border-top-color: var(--border-color);
+}
+
+/* Sötét mód - Select és dropdown */
+[data-theme="dark"] option {
+    background: #0f0f1a;
+    color: var(--text-color);
+}
+
+/* Sötét mód - Placeholder */
+[data-theme="dark"] ::placeholder {
+    color: var(--text-muted);
+}
+
+/* Sötét mód - Scrollbar */
+[data-theme="dark"] ::-webkit-scrollbar {
+    width: 8px;
+    height: 8px;
+}
+
+[data-theme="dark"] ::-webkit-scrollbar-track {
+    background: #1a1a2e;
+}
+
+[data-theme="dark"] ::-webkit-scrollbar-thumb {
+    background: #3d4a6c;
+    border-radius: 4px;
+}
+
+[data-theme="dark"] ::-webkit-scrollbar-thumb:hover {
+    background: #4d5a7c;
+}
+
+/* Sötét mód - Eszköztár (Toolbar) */
+[data-theme="dark"] .tree-toolbar {
+    background: var(--card-bg);
+    border-bottom-color: var(--border-color);
+}
+
+[data-theme="dark"] .toolbar-btn {
+    background: #2d3a5c;
+    border-color: var(--border-color);
+    color: var(--text-color);
+}
+
+[data-theme="dark"] .toolbar-btn:hover {
+    background: #3d4a6c;
+    border-color: var(--primary-color);
+    color: var(--primary-color);
+}
+
+[data-theme="dark"] .toolbar-select {
+    background: #2d3a5c;
+    border-color: var(--border-color);
+    color: var(--text-color);
+}
+
+/* Sötét mód - Statisztika oldal */
+[data-theme="dark"] .stat-card {
+    background: var(--card-bg);
+}
+
+[data-theme="dark"] .stat-value {
+    color: var(--text-color);
+}
+
+[data-theme="dark"] .stat-label {
+    color: var(--text-muted);
+}
+
+[data-theme="dark"] .chart-container {
+    background: var(--card-bg);
+}
+
+[data-theme="dark"] .chart-container h3 {
+    color: var(--primary-color);
+}
+
+/* Sötét mód - Beállítások oldal */
+[data-theme="dark"] .settings-section {
+    background: var(--card-bg);
+}
+
+[data-theme="dark"] .settings-section h3 {
+    border-bottom-color: var(--border-color);
+    color: var(--text-color);
+}
+
+[data-theme="dark"] .setting-item label {
+    color: var(--text-muted);
+}
+
+[data-theme="dark"] .setting-item.checkbox label {
+    color: var(--text-color);
+}
+
+[data-theme="dark"] .setting-item input[type="number"],
+[data-theme="dark"] .setting-item input[type="range"],
+[data-theme="dark"] .setting-item select {
+    background: #0f0f1a;
+    border-color: var(--border-color);
+    color: var(--text-color);
+}
+
+[data-theme="dark"] .setting-item input[type="color"] {
+    border-color: var(--border-color);
+    background: #0f0f1a;
+}
+
+/* Sötét mód - Személyek lista oldal */
+[data-theme="dark"] .persons-header {
+    background: var(--card-bg);
+}
+
+[data-theme="dark"] .person-item {
+    background: var(--card-bg);
+}
+
+[data-theme="dark"] .person-item:hover {
+    background: #2d3a5c;
+}
+
+[data-theme="dark"] .person-name {
+    color: var(--text-color);
+}
+
+[data-theme="dark"] .person-details {
+    color: var(--text-muted);
+}
+
+/* Sötét mód - Nézetek háttere */
+[data-theme="dark"] .view {
+    background: var(--bg-color);
+}
+
+[data-theme="dark"] .view-content {
+    background: var(--bg-color);
+}
+
+/* Sötét mód - Empty state */
+[data-theme="dark"] .empty-state {
+    color: var(--text-muted);
+}
+
+[data-theme="dark"] .empty-state h3 {
+    color: var(--text-color);
+}
+
+/* Sötét mód - Info kártyák és tooltip */
+[data-theme="dark"] .info-tooltip,
+[data-theme="dark"] .tooltip {
+    background: var(--card-bg);
+    color: var(--text-color);
+    border-color: var(--border-color);
+}
+
+/* Sötét mód - Lomtár oldal */
+[data-theme="dark"] .trash-header p {
+    color: var(--text-muted);
+}
+
+[data-theme="dark"] .trash-hint {
+    background: #2d3a5c;
+    color: #7dd3fc;
+    border-color: #3d4a6c;
+}
+
+[data-theme="dark"] .trash-card {
+    background: var(--card-bg);
+    border-color: var(--border-color);
+    box-shadow: var(--shadow-sm);
+}
+
+[data-theme="dark"] .trash-entity {
+    color: var(--text-color);
+}
+
+[data-theme="dark"] .trash-entity .badge {
+    background: #2d3a5c;
+    color: var(--text-color);
+}
+
+[data-theme="dark"] .trash-title {
+    color: var(--text-color);
+}
+
+[data-theme="dark"] .trash-meta {
+    color: var(--text-muted);
+}
+
+/* Sötét mód - Backup szekció */
+[data-theme="dark"] .backup-section {
+    border-top-color: var(--border-color);
+}
+
+[data-theme="dark"] .backup-header h3 {
+    color: var(--text-color);
+}
+
+[data-theme="dark"] .backup-header p {
+    color: var(--text-muted);
+}
+
+[data-theme="dark"] .backup-card {
+    background: var(--card-bg);
+    border-color: var(--border-color);
+}
+
 /* ==================== TÉMA KAPCSOLÓ ==================== */
 .theme-toggle {
     display: flex;
