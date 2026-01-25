@@ -1443,8 +1443,18 @@ function getEventTypeName(type) {
 // ==================== ROOT PERSON SELECTOR ====================
 function updateRootPersonSelector() {
     const selector = document.getElementById('root-person');
+    
+    // Születési év formázása
+    const formatBirthYear = (person) => {
+        if (person.birth_date) {
+            const year = person.birth_date.split('-')[0];
+            return ` (${year})`;
+        }
+        return '';
+    };
+    
     selector.innerHTML = '<option value="">-- Gyökér személy --</option>' +
-        persons.map(p => `<option value="${p.id}">${p.full_name}</option>`).join('');
+        persons.map(p => `<option value="${p.id}">${p.full_name}${formatBirthYear(p)}</option>`).join('');
 }
 
 // ==================== INICIALIZÁLÁS ====================
