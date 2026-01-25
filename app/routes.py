@@ -1,7 +1,12 @@
-from flask import Blueprint, render_template, request, jsonify, current_app
+from flask import Blueprint, render_template, request, jsonify, current_app, redirect, url_for, session
 from werkzeug.utils import secure_filename
 from app import db
-from app.models import Person, Marriage, Event, Document, TreeSettings, DeletedRecord
+from app.models import Person, Marriage, Event, Document, TreeSettings, DeletedRecord, AppSettings, BackupLog
+from app.auth import (
+    login_required, api_login_required, is_authenticated, 
+    login_user, logout_user, verify_password, change_password
+)
+from app.backup import backup_manager, auto_backup_on_change
 from sqlalchemy import exists
 import os
 import json
@@ -31,9 +36,117 @@ def allowed_file(filename):
     return '.' in filename and filename.rsplit('.', 1)[1].lower() in ALLOWED_EXTENSIONS
 
 
+# ==================== AUTENTIKÁCIÓ ====================
+
+@main_bp.route('/login', methods=['GET', 'POST'])
+def login():
+    """Bejelentkezési oldal"""
+    error = None
+    
+    if request.method == 'POST':
+        password = request.form.get('password', '')
+        
+        if verify_password(password):
+            login_user()
+            return redirect(url_for('main.index'))
+        else:
+            error = 'Hibás jelszó'
+    
+    # Ha már be van jelentkezve, irányítsuk át
+    if is_authenticated():
+        return redirect(url_for('main.index'))
+    
+    return render_template('login.html', error=error)
+
+
+@main_bp.route('/logout')
+def logout():
+    """Kijelentkezés"""
+    logout_user()
+    return redirect(url_for('main.login'))
+
+
+@api_bp.route('/auth/check', methods=['GET'])
+def check_auth():
+    """Bejelentkezési állapot ellenőrzése"""
+    return jsonify({'authenticated': is_authenticated()})
+
+
+@api_bp.route('/auth/change-password', methods=['POST'])
+@api_login_required
+def api_change_password():
+    """Jelszó megváltoztatása"""
+    data = request.get_json()
+    current = data.get('current_password', '')
+    new = data.get('new_password', '')
+    
+    result = change_password(current, new)
+    
+    if 'error' in result:
+        return jsonify(result), 400
+    
+    return jsonify(result)
+
+
+# ==================== BACKUP API ====================
+
+@api_bp.route('/backups', methods=['GET'])
+@api_login_required
+def list_backups():
+    """Összes backup listázása"""
+    return jsonify(backup_manager.list_backups())
+
+
+@api_bp.route('/backups', methods=['POST'])
+@api_login_required
+def create_backup():
+    """Új backup létrehozása"""
+    data = request.get_json() or {}
+    description = data.get('description', 'Manuális mentés')
+    
+    result = backup_manager.create_backup(trigger='manual', description=description)
+    
+    if 'error' in result:
+        return jsonify(result), 500
+    
+    return jsonify(result)
+
+
+@api_bp.route('/backups/<int:backup_id>/restore', methods=['POST'])
+@api_login_required
+def restore_backup(backup_id):
+    """Backup visszaállítása"""
+    result = backup_manager.restore_backup(backup_id)
+    
+    if 'error' in result:
+        return jsonify(result), 400
+    
+    return jsonify(result)
+
+
+@api_bp.route('/backups/<int:backup_id>', methods=['DELETE'])
+@api_login_required
+def delete_backup(backup_id):
+    """Backup törlése"""
+    result = backup_manager.delete_backup(backup_id)
+    
+    if 'error' in result:
+        return jsonify(result), 400
+    
+    return jsonify(result)
+
+
+@api_bp.route('/backups/stats', methods=['GET'])
+@api_login_required
+def backup_stats():
+    """Backup statisztikák"""
+    return jsonify(backup_manager.get_backup_stats())
+
+
 # ==================== FŐOLDAL ====================
 
 @main_bp.route('/')
+@login_required
 def index():
     return render_template('index.html')
 
@@ -41,6 +154,7 @@ def index():
 # ==================== SZEMÉLYEK API ====================
 
 @api_bp.route('/persons', methods=['GET'])
+@api_login_required
 def get_persons():
     """Összes személy lekérdezése"""
     persons = Person.query.filter(not_deleted_filter(Person, 'person')).all()
@@ -1079,119 +1193,3 @@ def delete_permanently():
     db.session.commit()
 
     return jsonify({'status': 'deleted', 'entity_type': entity_type, 'entity_id': entity_id})
-
-
-# ==================== ADATBÁZIS BACKUP KEZELÉS ====================
-
-@api_bp.route('/backups', methods=['GET'])
-def list_backups():
-    """Adatbázis mentések listázása"""
-    from pathlib import Path
-    
-    backup_dir = Path(current_app.instance_path).parent / 'data' / 'backups'
-    
-    if not backup_dir.exists():
-        return jsonify([])
-    
-    backups = []
-    for f in sorted(backup_dir.glob('*.db'), reverse=True):
-        stat = f.stat()
-        # Fájlnévből kinyerjük a dátumot
-        # Format: familytree_backup_20260123_213900.db
-        name_parts = f.stem.split('_')
-        if len(name_parts) >= 4:
-            date_str = name_parts[2]  # 20260123
-            time_str = name_parts[3]  # 213900
-            try:
-                formatted_date = f"{date_str[:4]}-{date_str[4:6]}-{date_str[6:8]} {time_str[:2]}:{time_str[2:4]}:{time_str[4:6]}"
-            except:
-                formatted_date = str(f.name)
-        else:
-            formatted_date = str(f.name)
-        
-        backups.append({
-            'filename': f.name,
-            'path': str(f),
-            'size_kb': round(stat.st_size / 1024, 1),
-            'created_at': formatted_date,
-            'timestamp': stat.st_mtime
-        })
-    
-    return jsonify(backups)
-
-
-@api_bp.route('/backups/restore', methods=['POST'])
-def restore_backup():
-    """Adatbázis visszaállítása mentésből"""
-    import shutil
-    from pathlib import Path
-    
-    data = request.get_json()
-    filename = data.get('filename')
-    
-    if not filename:
-        return jsonify({'error': 'Nincs megadva fájlnév'}), 400
-    
-    backup_dir = Path(current_app.instance_path).parent / 'data' / 'backups'
-    backup_path = backup_dir / filename
-    
-    if not backup_path.exists():
-        return jsonify({'error': 'A backup fájl nem található'}), 404
-    
-    # Biztonsági ellenőrzés - csak .db fájlok
-    if not filename.endswith('.db'):
-        return jsonify({'error': 'Érvénytelen fájltípus'}), 400
-    
-    db_path = Path(current_app.instance_path).parent / 'data' / 'familytree.db'
-    
-    # Jelenlegi adatbázis mentése visszaállítás előtt
-    timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
-    pre_restore_backup = backup_dir / f'familytree_pre_restore_{timestamp}.db'
-    
-    try:
-        # Kapcsolat lezárása
-        db.session.remove()
-        db.engine.dispose()
-        
-        # Jelenlegi mentése
-        if db_path.exists():
-            shutil.copy2(db_path, pre_restore_backup)
-        
-        # Visszaállítás
-        shutil.copy2(backup_path, db_path)
-        
-        return jsonify({
-            'message': 'Adatbázis sikeresen visszaállítva',
-            'restored_from': filename,
-            'pre_restore_backup': pre_restore_backup.name
-        })
-    except Exception as e:
-        return jsonify({'error': f'Visszaállítási hiba: {str(e)}'}), 500
-
-
-@api_bp.route('/backups/delete', methods=['POST'])
-def delete_backup():
-    """Backup fájl törlése"""
-    from pathlib import Path
-    
-    data = request.get_json()
-    filename = data.get('filename')
-    
-    if not filename:
-        return jsonify({'error': 'Nincs megadva fájlnév'}), 400
-    
-    backup_dir = Path(current_app.instance_path).parent / 'data' / 'backups'
-    backup_path = backup_dir / filename
-    
-    if not backup_path.exists():
-        return jsonify({'error': 'A backup fájl nem található'}), 404
-    
-    # Biztonsági ellenőrzés
-    if not filename.endswith('.db') or '..' in filename:
-        return jsonify({'error': 'Érvénytelen fájlnév'}), 400
-    
-    try:
-        backup_path.unlink()
-        return jsonify({'message': 'Backup törölve', 'filename': filename})
-    except Exception as e:
-        return jsonify({'error': f'Törlési hiba: {str(e)}'}), 500

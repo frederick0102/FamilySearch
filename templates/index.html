@@ -55,7 +55,7 @@
                 <button class="btn btn-primary" id="add-person-btn">
                     <i class="fas fa-plus"></i> <span class="btn-text">Új személy</span>
                 </button>
-                <span class="version-badge" title="Verzió">v:9708990</span>
+                <span class="version-badge" title="Verzió">v:5f1c7b2</span>
             </div>
         </nav>
 
@@ -314,6 +314,46 @@
                         </button>
                     </div>
 
+                    <!-- Jelszó változtatás szekció -->
+                    <div class="settings-section">
+                        <h3><i class="fas fa-lock"></i> Jelszó változtatás</h3>
+                        <div class="settings-grid">
+                            <div class="setting-item">
+                                <label for="current-password">Jelenlegi jelszó</label>
+                                <input type="password" id="current-password" placeholder="Jelenlegi jelszó...">
+                            </div>
+                            <div class="setting-item">
+                                <label for="new-password">Új jelszó</label>
+                                <input type="password" id="new-password" placeholder="Új jelszó (min. 4 karakter)">
+                            </div>
+                            <div class="setting-item">
+                                <label for="confirm-password">Új jelszó megerősítése</label>
+                                <input type="password" id="confirm-password" placeholder="Új jelszó újra...">
+                            </div>
+                        </div>
+                        <div class="settings-actions">
+                            <button class="btn btn-primary" id="change-password-btn">
+                                <i class="fas fa-key"></i> Jelszó megváltoztatása
+                            </button>
+                        </div>
+                    </div>
+
+                    <!-- Backup szekció -->
+                    <div class="settings-section">
+                        <h3><i class="fas fa-history"></i> Biztonsági mentések</h3>
+                        <div class="backup-info" id="backup-stats">
+                            <p><i class="fas fa-spinner fa-spin"></i> Betöltés...</p>
+                        </div>
+                        <div class="settings-actions" style="margin-bottom: 20px;">
+                            <button class="btn btn-primary" id="create-backup-btn">
+                                <i class="fas fa-plus"></i> Új mentés létrehozása
+                            </button>
+                        </div>
+                        <div class="backup-list" id="backup-list">
+                            <!-- Backup lista ide kerül -->
+                        </div>
+                    </div>
+
                     <div class="settings-section">
                         <h3><i class="fas fa-database"></i> Adatok</h3>
                         <div class="settings-grid">
@@ -333,6 +373,16 @@
                                     <i class="fas fa-file-export"></i> GEDCOM Export
                                 </button>
                             </div>
+                        </div>
+                    </div>
+
+                    <!-- Kijelentkezés -->
+                    <div class="settings-section">
+                        <h3><i class="fas fa-sign-out-alt"></i> Munkamenet</h3>
+                        <div class="settings-actions">
+                            <a href="/logout" class="btn btn-danger">
+                                <i class="fas fa-sign-out-alt"></i> Kijelentkezés
+                            </a>
                         </div>
                     </div>
                 </div>

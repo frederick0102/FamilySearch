@@ -1513,6 +1513,189 @@ function initThemeToggle() {
     });
 }
 
+// ==================== JELSZÓ VÁLTOZTATÁS ====================
+async function changePassword() {
+    const currentPassword = document.getElementById('current-password').value;
+    const newPassword = document.getElementById('new-password').value;
+    const confirmPassword = document.getElementById('confirm-password').value;
+    
+    if (!currentPassword) {
+        showNotification('Adja meg a jelenlegi jelszót!', 'error');
+        return;
+    }
+    
+    if (!newPassword || newPassword.length < 4) {
+        showNotification('Az új jelszónak legalább 4 karakter hosszúnak kell lennie!', 'error');
+        return;
+    }
+    
+    if (newPassword !== confirmPassword) {
+        showNotification('Az új jelszavak nem egyeznek!', 'error');
+        return;
+    }
+    
+    try {
+        const result = await API.post('/auth/change-password', {
+            current_password: currentPassword,
+            new_password: newPassword
+        });
+        
+        showNotification('Jelszó sikeresen megváltoztatva!', 'success');
+        
+        // Mezők ürítése
+        document.getElementById('current-password').value = '';
+        document.getElementById('new-password').value = '';
+        document.getElementById('confirm-password').value = '';
+        
+    } catch (error) {
+        showNotification(error.message || 'Hiba történt a jelszó változtatásakor', 'error');
+    }
+}
+
+// ==================== BACKUP KEZELÉS ====================
+async function loadBackups() {
+    const statsContainer = document.getElementById('backup-stats');
+    const listContainer = document.getElementById('backup-list');
+    
+    try {
+        // Statisztikák betöltése
+        const stats = await API.get('/backups/stats');
+        
+        statsContainer.innerHTML = `
+            <div class="stats-row">
+                <span class="stat-item">
+                    <i class="fas fa-archive"></i>
+                    <strong>${stats.total_backups}</strong> mentés
+                </span>
+                <span class="stat-item">
+                    <i class="fas fa-hdd"></i>
+                    <strong>${stats.total_size_mb}</strong> MB
+                </span>
+                ${stats.last_backup ? `
+                <span class="stat-item">
+                    <i class="fas fa-clock"></i>
+                    Utolsó: ${formatBackupDate(stats.last_backup.created_at)}
+                </span>
+                ` : ''}
+            </div>
+        `;
+        
+        // Backup lista betöltése
+        const backups = await API.get('/backups');
+        
+        if (backups.length === 0) {
+            listContainer.innerHTML = `
+                <div class="backup-empty">
+                    <i class="fas fa-archive"></i>
+                    <p>Még nincs biztonsági mentés</p>
+                </div>
+            `;
+            return;
+        }
+        
+        listContainer.innerHTML = backups.slice(0, 20).map(backup => `
+            <div class="backup-item" data-id="${backup.id}">
+                <div class="backup-item-info">
+                    <div class="backup-item-name">
+                        <i class="fas fa-database"></i>
+                        ${backup.description || 'Biztonsági mentés'}
+                    </div>
+                    <div class="backup-item-meta">
+                        ${formatBackupDate(backup.created_at)} • 
+                        ${backup.file_size_mb} MB • 
+                        ${backup.trigger === 'auto' ? 'Automatikus' : 'Manuális'}
+                        ${!backup.exists ? ' • <span style="color: var(--danger-color)">Fájl hiányzik</span>' : ''}
+                    </div>
+                </div>
+                <div class="backup-item-actions">
+                    ${backup.exists ? `
+                    <button class="btn btn-restore btn-sm" onclick="restoreBackup(${backup.id})" title="Visszaállítás">
+                        <i class="fas fa-undo"></i>
+                    </button>
+                    ` : ''}
+                    <button class="btn btn-danger btn-sm" onclick="deleteBackup(${backup.id})" title="Törlés">
+                        <i class="fas fa-trash"></i>
+                    </button>
+                </div>
+            </div>
+        `).join('');
+        
+    } catch (error) {
+        console.error('Backup betöltési hiba:', error);
+        statsContainer.innerHTML = '<p>Hiba a mentések betöltésekor</p>';
+    }
+}
+
+async function createBackup() {
+    const btn = document.getElementById('create-backup-btn');
+    const originalHtml = btn.innerHTML;
+    
+    btn.innerHTML = '<i class="fas fa-spinner fa-spin"></i> Mentés...';
+    btn.disabled = true;
+    
+    try {
+        const result = await API.post('/backups', {
+            description: 'Manuális mentés - ' + new Date().toLocaleString('hu-HU')
+        });
+        
+        showNotification('Biztonsági mentés sikeresen létrehozva!', 'success');
+        loadBackups();
+        
+    } catch (error) {
+        showNotification('Hiba a mentés létrehozásakor: ' + error.message, 'error');
+    } finally {
+        btn.innerHTML = originalHtml;
+        btn.disabled = false;
+    }
+}
+
+async function restoreBackup(backupId) {
+    if (!confirm('Biztosan visszaállítja ezt a mentést?\n\nA jelenlegi adatok mentésre kerülnek a visszaállítás előtt.')) {
+        return;
+    }
+    
+    try {
+        const result = await API.post(`/backups/${backupId}/restore`);
+        
+        showNotification('Visszaállítás sikeres! Az oldal újratöltődik...', 'success');
+        
+        // Oldal újratöltése az új adatokkal
+        setTimeout(() => {
+            window.location.reload();
+        }, 1500);
+        
+    } catch (error) {
+        showNotification('Hiba a visszaállításkor: ' + error.message, 'error');
+    }
+}
+
+async function deleteBackup(backupId) {
+    if (!confirm('Biztosan törli ezt a mentést?')) {
+        return;
+    }
+    
+    try {
+        await API.delete(`/backups/${backupId}`);
+        showNotification('Mentés törölve', 'success');
+        loadBackups();
+        
+    } catch (error) {
+        showNotification('Hiba a törléskor: ' + error.message, 'error');
+    }
+}
+
+function formatBackupDate(dateStr) {
+    if (!dateStr) return '';
+    const date = new Date(dateStr);
+    return date.toLocaleString('hu-HU', {
+        year: 'numeric',
+        month: 'short',
+        day: 'numeric',
+        hour: '2-digit',
+        minute: '2-digit'
+    });
+}
+
 document.addEventListener('DOMContentLoaded', async () => {
     // Alapvető UI inicializálás - ezeknek mindig működniük kell
     initNavigation();
@@ -1532,6 +1715,13 @@ document.addEventListener('DOMContentLoaded', async () => {
     document.getElementById('add-event-btn').addEventListener('click', openEventModal);
     document.getElementById('save-event-btn').addEventListener('click', saveEvent);
     document.getElementById('save-settings').addEventListener('click', saveSettings);
+    
+    // Jelszó változtatás
+    document.getElementById('change-password-btn').addEventListener('click', changePassword);
+    
+    // Backup kezelés
+    document.getElementById('create-backup-btn').addEventListener('click', createBackup);
+    loadBackups();
     
     // Export/Import - KRITIKUS, mindig működjön!
     document.getElementById('export-json').addEventListener('click', exportJSON);

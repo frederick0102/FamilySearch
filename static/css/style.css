@@ -367,6 +367,32 @@
     border-color: var(--border-color);
 }
 
+[data-theme="dark"] .backup-item {
+    background: var(--card-bg);
+    border-color: var(--border-color);
+}
+
+[data-theme="dark"] .backup-item:hover {
+    border-color: var(--primary-color);
+}
+
+[data-theme="dark"] .backup-item-name {
+    color: var(--text-color);
+}
+
+[data-theme="dark"] .backup-item-meta {
+    color: var(--text-muted);
+}
+
+[data-theme="dark"] .backup-info p,
+[data-theme="dark"] .backup-info .stat-item {
+    color: var(--text-muted);
+}
+
+[data-theme="dark"] .backup-empty {
+    color: var(--text-muted);
+}
+
 /* ==================== TÉMA KAPCSOLÓ ==================== */
 .theme-toggle {
     display: flex;
@@ -1583,6 +1609,112 @@ body {
     font-size: 3rem;
     margin-bottom: 16px;
     opacity: 0.5;
+}
+
+/* Danger gomb */
+.btn-danger {
+    background: var(--danger-color);
+    color: white;
+    text-decoration: none;
+}
+
+.btn-danger:hover {
+    background: #c82333;
+    transform: translateY(-1px);
+}
+
+/* Backup stats */
+.backup-info p {
+    margin: 0;
+    color: var(--text-muted);
+    font-size: 0.9rem;
+}
+
+.backup-info .stats-row {
+    display: flex;
+    gap: 20px;
+    flex-wrap: wrap;
+    margin-bottom: 10px;
+}
+
+.backup-info .stat-item {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+}
+
+.backup-info .stat-item i {
+    color: var(--primary-color);
+}
+
+/* Backup lista elem */
+.backup-item {
+    background: var(--card-bg);
+    border: 1px solid var(--border-color);
+    border-radius: 10px;
+    padding: 14px 18px;
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    gap: 12px;
+    margin-bottom: 10px;
+    transition: var(--transition);
+}
+
+.backup-item:hover {
+    border-color: var(--primary-color);
+    box-shadow: var(--shadow-sm);
+}
+
+.backup-item-info {
+    flex: 1;
+    min-width: 0;
+}
+
+.backup-item-name {
+    font-weight: 600;
+    color: var(--text-color);
+    margin-bottom: 4px;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+}
+
+.backup-item-name i {
+    color: var(--primary-color);
+}
+
+.backup-item-meta {
+    font-size: 0.8rem;
+    color: var(--text-muted);
+}
+
+.backup-item-actions {
+    display: flex;
+    gap: 8px;
+    flex-shrink: 0;
+}
+
+.backup-item-actions .btn {
+    padding: 6px 12px;
+    font-size: 0.85rem;
+}
+
+.btn-restore {
+    background: var(--success-color);
+    color: white;
+}
+
+.btn-restore:hover {
+    background: #218838;
+}
+
+/* Password change inputs */
+#current-password,
+#new-password,
+#confirm-password {
+    width: 100%;
+    max-width: 300px;
 }
 
 /* ==================== RESPONSIVE ==================== */

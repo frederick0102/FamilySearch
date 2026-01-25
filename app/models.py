@@ -467,3 +467,56 @@ class DeletedRecord(db.Model):
             'entity_id': self.entity_id,
             'deleted_at': self.deleted_at.isoformat() if self.deleted_at else None
         }
+
+
+class AppSettings(db.Model):
+    """Alkalmazás beállítások - jelszó és egyéb globális beállítások"""
+    __tablename__ = 'app_settings'
+    
+    id = db.Column(db.Integer, primary_key=True)
+    key = db.Column(db.String(100), unique=True, nullable=False)
+    value = db.Column(db.Text)
+    created_at = db.Column(db.DateTime, default=datetime.utcnow)
+    updated_at = db.Column(db.DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+    
+    @staticmethod
+    def get(key, default=None):
+        """Beállítás lekérése kulcs alapján"""
+        setting = AppSettings.query.filter_by(key=key).first()
+        return setting.value if setting else default
+    
+    @staticmethod
+    def set(key, value):
+        """Beállítás mentése"""
+        from app import db
+        setting = AppSettings.query.filter_by(key=key).first()
+        if setting:
+            setting.value = value
+            setting.updated_at = datetime.utcnow()
+        else:
+            setting = AppSettings(key=key, value=value)
+            db.session.add(setting)
+        db.session.commit()
+        return setting
+
+
+class BackupLog(db.Model):
+    """Backup napló - automatikus mentések követése"""
+    __tablename__ = 'backup_logs'
+    
+    id = db.Column(db.Integer, primary_key=True)
+    filename = db.Column(db.String(255), nullable=False)
+    file_size = db.Column(db.Integer)  # bytes
+    trigger = db.Column(db.String(50))  # auto, manual, scheduled
+    description = db.Column(db.Text)
+    created_at = db.Column(db.DateTime, default=datetime.utcnow)
+    
+    def to_dict(self):
+        return {
+            'id': self.id,
+            'filename': self.filename,
+            'file_size': self.file_size,
+            'trigger': self.trigger,
+            'description': self.description,
+            'created_at': self.created_at.isoformat() if self.created_at else None
+        }
