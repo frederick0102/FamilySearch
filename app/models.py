@@ -428,6 +428,9 @@ class TreeSettings(db.Model):
     font_family = db.Column(db.String(100), default='Arial, sans-serif')
     font_size = db.Column(db.Integer, default=14)
     
+    # Alapértelmezett gyökérszemély
+    default_root_person_id = db.Column(db.Integer, db.ForeignKey('persons.id'), nullable=True)
+    
     def to_dict(self):
         return {
             'id': self.id,
@@ -449,7 +452,8 @@ class TreeSettings(db.Model):
             'background_color': self.background_color,
             'background_image': self.background_image,
             'font_family': self.font_family,
-            'font_size': self.font_size
+            'font_size': self.font_size,
+            'default_root_person_id': self.default_root_person_id
         }
 
 

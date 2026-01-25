@@ -1037,11 +1037,18 @@ function buildGenerationLayout(sizes) {
         let attempts = 0;
         const step = horizontalSpacing;
         
-        // Kerekítés a horizontalSpacing felére, hogy biztosan ne legyenek átfedések
-        const slotSize = Math.round(horizontalSpacing / 2);
-        const roundToSlot = (val) => Math.round(val / slotSize) * slotSize;
+        // Teljes kártyaszélességgel ellenőrizzük az ütközést
+        // Egy pozíció "foglalt" ha bármely pozícionált kártya cardWidth távolságon belül van
+        const isOccupied = (testX) => {
+            for (const occupiedX of occupied) {
+                if (Math.abs(testX - occupiedX) < cardWidth + 20) {
+                    return true;
+                }
+            }
+            return false;
+        };
         
-        while (occupied.has(roundToSlot(x)) && attempts < 100) {
+        while (isOccupied(x) && attempts < 100) {
             // Alternáló keresés: jobbra, balra, jobbra+1, balra+1, ...
             attempts++;
             if (attempts % 2 === 1) {
@@ -1051,7 +1058,7 @@ function buildGenerationLayout(sizes) {
             }
         }
         
-        occupied.add(roundToSlot(x));
+        occupied.add(x);
         return x;
     };
     

@@ -790,7 +790,7 @@ def update_settings():
     for field in ['name', 'male_color', 'female_color', 'unknown_color', 'deceased_opacity',
                   'line_color', 'line_width', 'marriage_line_style', 'card_width', 'card_height',
                   'card_border_radius', 'show_photos', 'show_dates', 'show_places', 'show_occupation',
-                  'background_color', 'background_image', 'font_family', 'font_size']:
+                  'background_color', 'background_image', 'font_family', 'font_size', 'default_root_person_id']:
         if field in data:
             setattr(settings, field, data[field])
     
