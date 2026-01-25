@@ -1610,57 +1610,80 @@ body {
     }
 }
 
-/* Mobil nézet */
+/* ==================== MOBIL NÉZET - 768px ==================== */
 @media (max-width: 768px) {
-    .navbar {
-        height: auto;
-        min-height: var(--navbar-height);
-        padding: 10px 15px;
-        flex-wrap: nowrap;
+    :root {
+        --navbar-height: 56px;
+        --bottom-nav-height: 60px;
+        --safe-area-bottom: env(safe-area-inset-bottom, 0px);
     }
     
-    .navbar-toggle {
-        display: block;
-        order: 3;
+    body {
+        overflow: auto;
+        -webkit-overflow-scrolling: touch;
+    }
+    
+    #app {
+        height: 100vh;
+        height: 100dvh; /* Dynamic viewport height for mobile browsers */
+        padding-bottom: calc(var(--bottom-nav-height) + var(--safe-area-bottom));
+    }
+    
+    /* ===== KOMPAKT FEJLÉC ===== */
+    .navbar {
+        height: var(--navbar-height);
+        min-height: var(--navbar-height);
+        padding: 0 12px;
+        flex-wrap: nowrap;
+        position: sticky;
+        top: 0;
+        gap: 8px;
     }
     
     .navbar-brand {
         order: 1;
+        flex-shrink: 0;
     }
     
+    .navbar-brand i {
+        font-size: 1.4rem;
+    }
+    
+    /* A hamburger menü rejtése - bottom nav helyettesíti */
+    .navbar-toggle {
+        display: none !important;
+    }
+    
+    /* A felső menü teljesen eltűnik - bottom nav-ot használunk */
     .navbar-menu {
-        display: none;
-        order: 4;
-        width: 100%;
-        flex-direction: column;
-        gap: 5px;
-        margin: 10px 0 0 0;
-        padding-top: 10px;
-        border-top: 1px solid rgba(255,255,255,0.2);
-    }
-    
-    .navbar-menu.show {
-        display: flex;
-    }
-    
-    .navbar-menu .nav-btn {
-        width: 100%;
-        justify-content: flex-start;
-        padding: 12px 15px;
-    }
-    
-    .navbar-menu .nav-btn span {
-        display: inline;
+        display: none !important;
     }
     
     .navbar-actions {
         order: 2;
         margin-left: auto;
         gap: 8px;
+        flex: 1;
+        justify-content: flex-end;
     }
     
+    /* Keresőmező mobil */
     .navbar-actions .search-box {
-        display: none;
+        display: flex;
+        flex: 1;
+        max-width: 200px;
+    }
+    
+    .navbar-actions .search-box input {
+        width: 100%;
+        height: 36px;
+        font-size: 14px;
+        padding: 0 32px 0 12px;
+        border-radius: 18px;
+    }
+    
+    .navbar-actions .search-box i {
+        right: 10px;
     }
     
     .navbar-actions .version-badge {
@@ -1673,74 +1696,375 @@ body {
     
     .navbar-actions .btn {
         padding: 8px 12px;
+        min-width: 44px;
+        min-height: 44px;
+        display: flex;
+        align-items: center;
+        justify-content: center;
     }
     
-    .form-row {
+    .theme-toggle {
+        padding: 8px;
+        min-width: 44px;
+        min-height: 44px;
+        border-radius: 50%;
+        justify-content: center;
+    }
+    
+    /* ===== ALSÓ NAVIGÁCIÓS SÁV (iOS/Android stílus) ===== */
+    .navbar-menu {
+        display: flex !important;
+        position: fixed;
+        bottom: 0;
+        left: 0;
+        right: 0;
+        height: calc(var(--bottom-nav-height) + var(--safe-area-bottom));
+        padding-bottom: var(--safe-area-bottom);
+        background: var(--card-bg);
+        border-top: 1px solid var(--border-color);
+        box-shadow: 0 -2px 10px rgba(0, 0, 0, 0.1);
+        margin: 0;
+        z-index: 1001;
+        flex-direction: row;
+        justify-content: space-around;
+        align-items: stretch;
+        gap: 0;
+    }
+    
+    [data-theme="dark"] .navbar-menu {
+        background: var(--card-bg);
+        border-top-color: var(--border-color);
+        box-shadow: 0 -2px 10px rgba(0, 0, 0, 0.3);
+    }
+    
+    .navbar-menu .nav-btn {
+        flex: 1;
         flex-direction: column;
+        justify-content: center;
+        align-items: center;
+        gap: 4px;
+        padding: 8px 4px;
+        border-radius: 0;
+        background: transparent;
+        color: var(--text-muted);
+        font-size: 10px;
+        min-height: var(--bottom-nav-height);
+        transition: color 0.2s ease, background 0.2s ease;
     }
     
+    .navbar-menu .nav-btn i {
+        font-size: 20px;
+        transition: transform 0.2s ease;
+    }
+    
+    .navbar-menu .nav-btn span {
+        display: block;
+        font-size: 10px;
+        font-weight: 500;
+        white-space: nowrap;
+        overflow: hidden;
+        text-overflow: ellipsis;
+        max-width: 100%;
+    }
+    
+    .navbar-menu .nav-btn:hover {
+        background: transparent;
+        color: var(--primary-color);
+    }
+    
+    .navbar-menu .nav-btn.active {
+        color: var(--primary-color);
+        background: transparent;
+        font-weight: 500;
+    }
+    
+    .navbar-menu .nav-btn.active i {
+        transform: scale(1.1);
+    }
+    
+    /* ===== FŐ TARTALOM ===== */
+    .main-content {
+        flex: 1;
+        overflow: auto;
+        -webkit-overflow-scrolling: touch;
+    }
+    
+    .view {
+        padding-bottom: 20px;
+    }
+    
+    /* ===== TOOLBAR MOBIL ===== */
     .tree-toolbar {
-        flex-wrap: wrap;
+        flex-wrap: nowrap;
+        overflow-x: auto;
+        -webkit-overflow-scrolling: touch;
         height: auto;
-        padding: 10px;
+        min-height: 50px;
+        padding: 8px 12px;
         gap: 8px;
+        scrollbar-width: none;
+        -ms-overflow-style: none;
+    }
+    
+    .tree-toolbar::-webkit-scrollbar {
+        display: none;
     }
     
     .toolbar-group {
-        flex-wrap: wrap;
-        gap: 5px;
+        flex-shrink: 0;
+        gap: 4px;
+    }
+    
+    .toolbar-btn {
+        min-width: 44px;
+        min-height: 44px;
+        padding: 10px;
     }
     
     .toolbar-select {
-        font-size: 0.85rem;
-        padding: 6px 8px;
+        font-size: 13px;
+        padding: 10px 12px;
+        min-height: 44px;
+        max-width: 140px;
     }
     
+    /* ===== MODAL MOBIL ===== */
     .modal-content {
-        width: 95%;
-        max-height: 95vh;
-        margin: 10px auto;
+        width: 100%;
+        max-width: 100%;
+        max-height: 100%;
+        height: 100%;
+        margin: 0;
+        border-radius: 0;
+        display: flex;
+        flex-direction: column;
     }
     
+    .modal-header {
+        position: sticky;
+        top: 0;
+        background: var(--card-bg);
+        z-index: 10;
+        border-radius: 0;
+        padding: 16px;
+        border-bottom: 1px solid var(--border-color);
+    }
+    
+    .modal-header h2 {
+        font-size: 18px;
+    }
+    
+    .modal-body {
+        flex: 1;
+        overflow-y: auto;
+        -webkit-overflow-scrolling: touch;
+        padding: 16px;
+    }
+    
+    .modal-footer {
+        position: sticky;
+        bottom: 0;
+        background: var(--card-bg);
+        border-top: 1px solid var(--border-color);
+        padding: 12px 16px;
+        gap: 8px;
+    }
+    
+    .modal-footer .btn {
+        flex: 1;
+        min-height: 48px;
+        font-size: 15px;
+    }
+    
+    /* ===== FORM ELEMEK MOBIL ===== */
+    .form-row {
+        flex-direction: column;
+        gap: 16px;
+    }
+    
+    .form-group {
+        margin-bottom: 16px;
+    }
+    
+    .form-group label {
+        font-size: 13px;
+        margin-bottom: 6px;
+    }
+    
+    .form-group input,
+    .form-group select,
+    .form-group textarea {
+        min-height: 48px;
+        font-size: 16px; /* Prevent iOS zoom on focus */
+        padding: 12px;
+        border-radius: 10px;
+    }
+    
+    /* ===== PERSONS VIEW MOBIL ===== */
     .persons-header {
         flex-direction: column;
-        align-items: flex-start;
+        align-items: stretch;
+        gap: 12px;
+        padding: 12px;
     }
     
     .filter-group {
         width: 100%;
+        flex-wrap: wrap;
     }
     
     .persons-search-box input {
         width: 100%;
+        min-height: 44px;
+        font-size: 16px;
     }
     
     .filter-group select {
         flex: 1;
         min-width: 100px;
-    }
-}
-
-/* Kis mobil nézet */
-@media (max-width: 480px) {
-    .navbar {
-        padding: 8px 10px;
-    }
-    
-    .navbar-brand i {
-        font-size: 1.3rem;
-    }
-    
-    .theme-toggle {
-        padding: 4px 8px;
+        min-height: 44px;
     }
     
     .persons-grid {
         grid-template-columns: 1fr;
+        gap: 12px;
+        padding: 12px;
     }
     
     .person-card {
-        padding: 15px;
+        padding: 16px;
+    }
+    
+    /* ===== STATISZTIKA MOBIL ===== */
+    .stats-grid {
+        grid-template-columns: repeat(2, 1fr);
+        gap: 12px;
+        padding: 12px;
+    }
+    
+    .stat-card {
+        padding: 16px;
+    }
+    
+    .stat-value {
+        font-size: 24px;
+    }
+    
+    .stat-label {
+        font-size: 12px;
+    }
+    
+    .chart-container {
+        margin: 12px;
+        padding: 16px;
+    }
+    
+    /* ===== BEÁLLÍTÁSOK MOBIL ===== */
+    .settings-section {
+        margin: 12px;
+        padding: 16px;
+        border-radius: 12px;
+    }
+    
+    .setting-item {
+        padding: 12px 0;
+    }
+    
+    .setting-item input,
+    .setting-item select {
+        min-height: 44px;
+    }
+    
+    /* ===== LOMTÁR MOBIL ===== */
+    .trash-grid {
+        grid-template-columns: 1fr;
+        gap: 12px;
+        padding: 12px;
+    }
+    
+    .trash-card {
+        padding: 16px;
+    }
+    
+    /* ===== TREE CONTAINER MOBIL ===== */
+    #tree-container {
+        touch-action: pan-x pan-y pinch-zoom;
+    }
+    
+    /* Optimalizált kártya méret mobilra */
+    .tree-node rect {
+        /* Kártyák automatikus méretezése mobilon */
+    }
+}
+
+/* ==================== KIS MOBIL NÉZET - 480px ==================== */
+@media (max-width: 480px) {
+    :root {
+        --bottom-nav-height: 56px;
+    }
+    
+    .navbar {
+        padding: 0 8px;
+    }
+    
+    .navbar-brand i {
+        font-size: 1.2rem;
+    }
+    
+    .navbar-actions .search-box {
+        max-width: 150px;
+    }
+    
+    .navbar-actions .btn {
+        padding: 6px 10px;
+        min-width: 40px;
+        min-height: 40px;
+    }
+    
+    .theme-toggle {
+        padding: 6px;
+        min-width: 40px;
+        min-height: 40px;
+    }
+    
+    .navbar-menu .nav-btn {
+        padding: 6px 2px;
+    }
+    
+    .navbar-menu .nav-btn i {
+        font-size: 18px;
+    }
+    
+    .navbar-menu .nav-btn span {
+        font-size: 9px;
+    }
+    
+    .toolbar-select {
+        max-width: 120px;
+        font-size: 12px;
+    }
+    
+    .stats-grid {
+        grid-template-columns: 1fr;
+    }
+    
+    .modal-header h2 {
+        font-size: 16px;
+    }
+}
+
+/* ==================== SAFE AREA - NOTCH kezelés ==================== */
+@supports (padding: max(0px)) {
+    @media (max-width: 768px) {
+        .navbar {
+            padding-left: max(12px, env(safe-area-inset-left));
+            padding-right: max(12px, env(safe-area-inset-right));
+        }
+        
+        .navbar-menu {
+            padding-left: env(safe-area-inset-left);
+            padding-right: env(safe-area-inset-right);
+        }
     }
 }
 
@@ -1761,6 +2085,93 @@ body {
 
 ::-webkit-scrollbar-thumb:hover {
     background: var(--primary-color);
+}
+
+/* ==================== TOUCH OPTIMALIZÁCIÓ ==================== */
+@media (hover: none) and (pointer: coarse) {
+    /* Touch eszközök - nagyobb touch targetek */
+    .btn,
+    .nav-btn,
+    .toolbar-btn,
+    .theme-toggle {
+        -webkit-tap-highlight-color: transparent;
+        touch-action: manipulation;
+    }
+    
+    /* Active állapot touch-ra */
+    .btn:active,
+    .nav-btn:active,
+    .toolbar-btn:active {
+        transform: scale(0.97);
+        opacity: 0.9;
+    }
+    
+    /* Hover eltávolítása touch eszközökön */
+    .btn:hover,
+    .nav-btn:hover,
+    .toolbar-btn:hover {
+        transform: none;
+    }
+    
+    /* Scrollbar elrejtése mobilon */
+    ::-webkit-scrollbar {
+        width: 4px;
+        height: 4px;
+    }
+    
+    ::-webkit-scrollbar-thumb {
+        background: rgba(0, 0, 0, 0.2);
+    }
+}
+
+/* ==================== PULL TO REFRESH TÁMOGATÁS ==================== */
+@media (max-width: 768px) {
+    body {
+        overscroll-behavior-y: contain;
+    }
+}
+
+/* ==================== LANDSCAPE MOBIL ==================== */
+@media (max-width: 768px) and (orientation: landscape) {
+    :root {
+        --bottom-nav-height: 50px;
+    }
+    
+    .navbar {
+        height: 48px;
+    }
+    
+    .navbar-menu .nav-btn {
+        padding: 4px 8px;
+        min-height: 50px;
+    }
+    
+    .navbar-menu .nav-btn i {
+        font-size: 16px;
+    }
+    
+    .navbar-menu .nav-btn span {
+        font-size: 8px;
+    }
+    
+    .modal-content {
+        flex-direction: row;
+        flex-wrap: wrap;
+    }
+    
+    .modal-header {
+        width: 100%;
+        flex-shrink: 0;
+    }
+    
+    .modal-body {
+        flex: 1;
+    }
+    
+    .modal-footer {
+        width: 100%;
+        flex-shrink: 0;
+    }
 }
 
 /* ==================== LOADING STATE ==================== */
