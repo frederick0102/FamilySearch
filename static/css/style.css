@@ -1795,37 +1795,46 @@ body {
     
     /* ===== TOOLBAR MOBIL ===== */
     .tree-toolbar {
-        flex-wrap: nowrap;
-        overflow-x: auto;
-        -webkit-overflow-scrolling: touch;
+        display: flex;
+        flex-wrap: wrap;
+        overflow-x: hidden;
         height: auto;
-        min-height: 50px;
-        padding: 8px 12px;
-        gap: 8px;
-        scrollbar-width: none;
-        -ms-overflow-style: none;
-    }
-    
-    .tree-toolbar::-webkit-scrollbar {
-        display: none;
+        min-height: auto;
+        padding: 8px;
+        gap: 6px;
+        justify-content: center;
     }
     
     .toolbar-group {
-        flex-shrink: 0;
+        display: flex;
+        flex-shrink: 1;
+        flex-wrap: wrap;
         gap: 4px;
+        justify-content: center;
     }
     
     .toolbar-btn {
-        min-width: 44px;
-        min-height: 44px;
-        padding: 10px;
+        min-width: 40px;
+        min-height: 40px;
+        width: 40px;
+        height: 40px;
+        padding: 8px;
+        font-size: 14px;
     }
     
     .toolbar-select {
-        font-size: 13px;
-        padding: 10px 12px;
-        min-height: 44px;
-        max-width: 140px;
+        font-size: 12px;
+        padding: 8px 6px;
+        min-height: 40px;
+        max-width: 110px;
+        flex: 1;
+        min-width: 90px;
+    }
+    
+    /* Elrejtjük a kevésbé fontos gombokat kis képernyőn */
+    #export-gedcom,
+    #fullscreen {
+        display: none;
     }
     
     /* ===== MODAL MOBIL ===== */
@@ -2012,19 +2021,19 @@ body {
     }
     
     .navbar-actions .search-box {
-        max-width: 150px;
+        max-width: 120px;
     }
     
     .navbar-actions .btn {
         padding: 6px 10px;
-        min-width: 40px;
-        min-height: 40px;
+        min-width: 36px;
+        min-height: 36px;
     }
     
     .theme-toggle {
         padding: 6px;
-        min-width: 40px;
-        min-height: 40px;
+        min-width: 36px;
+        min-height: 36px;
     }
     
     .navbar-menu .nav-btn {
@@ -2039,9 +2048,27 @@ body {
         font-size: 9px;
     }
     
+    /* Toolbar még kompaktabb 480px alatt */
+    .toolbar-btn {
+        min-width: 36px;
+        min-height: 36px;
+        width: 36px;
+        height: 36px;
+        padding: 6px;
+        font-size: 13px;
+    }
+    
     .toolbar-select {
-        max-width: 120px;
-        font-size: 12px;
+        max-width: 90px;
+        min-width: 70px;
+        font-size: 11px;
+        padding: 6px 4px;
+        min-height: 36px;
+    }
+    
+    /* Elrejtjük a layout választót is nagyon kis képernyőn */
+    #tree-layout {
+        display: none;
     }
     
     .stats-grid {
