@@ -1243,6 +1243,9 @@ function applySettings() {
         setVal('setting-font-family', settings.font_family || 'Arial, sans-serif');
         setVal('setting-font-size', settings.font_size || 14);
         
+        // Alapértelmezett gyökérszemély beállítása - a szelector feltöltése után történik
+        // (lásd: updateDefaultRootPersonSelector)
+        
         // CSS változók frissítése
         document.documentElement.style.setProperty('--male-color', settings.male_color || '#4A90D9');
         document.documentElement.style.setProperty('--female-color', settings.female_color || '#D94A8C');
@@ -1269,7 +1272,8 @@ async function saveSettings() {
         show_places: document.getElementById('setting-show-places').checked,
         show_occupation: document.getElementById('setting-show-occupation').checked,
         font_family: document.getElementById('setting-font-family').value,
-        font_size: parseInt(document.getElementById('setting-font-size').value)
+        font_size: parseInt(document.getElementById('setting-font-size').value),
+        default_root_person_id: document.getElementById('setting-default-root-person').value ? parseInt(document.getElementById('setting-default-root-person').value) : null
     };
     
     try {
@@ -1546,6 +1550,35 @@ function updateRootPersonSelector() {
     
     selector.innerHTML = '<option value="">-- Gyökér személy --</option>' +
         persons.map(p => `<option value="${p.id}">${p.full_name}${formatBirthYear(p)}</option>`).join('');
+    
+    // Beállítások oldali gyökér selector frissítése is
+    updateDefaultRootPersonSelector();
+}
+
+// Alapértelmezett gyökérszemély választó frissítése a beállításokban
+function updateDefaultRootPersonSelector() {
+    const selector = document.getElementById('setting-default-root-person');
+    if (!selector) return;
+    
+    const formatBirthYear = (person) => {
+        if (person.birth_date) {
+            const year = person.birth_date.split('-')[0];
+            return ` (${year})`;
+        }
+        return '';
+    };
+    
+    const currentValue = selector.value;
+    
+    selector.innerHTML = '<option value="">-- Nincs beállítva --</option>' +
+        persons.map(p => `<option value="${p.id}">${p.full_name}${formatBirthYear(p)}</option>`).join('');
+    
+    // Mentett érték visszaállítása
+    if (settings.default_root_person_id) {
+        selector.value = settings.default_root_person_id;
+    } else if (currentValue) {
+        selector.value = currentValue;
+    }
 }
 
 // ==================== INICIALIZÁLÁS ====================
@@ -1882,6 +1915,14 @@ document.addEventListener('DOMContentLoaded', async () => {
     try {
         persons = await API.get('/persons');
         updateRootPersonSelector();
+        
+        // Alapértelmezett gyökérszemély beállítása, ha van mentett érték
+        if (settings.default_root_person_id) {
+            const rootSelector = document.getElementById('root-person');
+            if (rootSelector && persons.some(p => p.id === settings.default_root_person_id)) {
+                rootSelector.value = settings.default_root_person_id;
+            }
+        }
     } catch (error) {
         console.error('Személyek betöltési hiba:', error);
         persons = [];

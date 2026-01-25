@@ -872,6 +872,45 @@ function buildGenerationLayout(sizes) {
             });
         }
         
+        // Mostoha szülők megjelölése (szülő jelenlegi/volt partnerei, akik NEM a másik szülő)
+        const myParents = parentsOf.get(rootActualId) || [];
+        myParents.forEach(parentId => {
+            const parentPartners = partnersOf.get(parentId) || [];
+            parentPartners.forEach(pp => {
+                // Ha a partner NEM a másik szülő, akkor mostoha szülő
+                if (!myParents.includes(pp.partnerId) && !relationshipLabels.has(pp.partnerId)) {
+                    const stepParent = treeData.nodes.find(n => n.id === pp.partnerId);
+                    const status = pp.status === 'divorced' ? ' (volt)' : '';
+                    const label = stepParent?.gender === 'male' ? 'Mostohaapa' : 'Mostohaanya';
+                    relationshipLabels.set(pp.partnerId, label + status);
+                }
+            });
+        });
+        
+        // Nagybácsik/Nagynénik megjelölése (szülők testvérei)
+        myParents.forEach(parentId => {
+            const parentNode = treeData.nodes.find(n => n.id === parentId);
+            const parentParentFamily = parentNode?.parent_family_id;
+            if (parentParentFamily && familyMap.has(parentParentFamily)) {
+                const parentSiblings = familyMap.get(parentParentFamily).children.filter(id => id !== parentId);
+                parentSiblings.forEach(sibId => {
+                    if (!relationshipLabels.has(sibId)) {
+                        const sib = treeData.nodes.find(n => n.id === sibId);
+                        relationshipLabels.set(sibId, sib?.gender === 'male' ? 'Nagybácsi' : 'Nagynéni');
+                    }
+                    // A nagybácsi/nagynéni partnerei is jelölve legyenek
+                    const sibPartners = partnersOf.get(sibId) || [];
+                    sibPartners.forEach(sp => {
+                        if (!relationshipLabels.has(sp.partnerId)) {
+                            const sibPartner = treeData.nodes.find(n => n.id === sp.partnerId);
+                            const status = sp.status === 'divorced' ? ' (volt)' : '';
+                            relationshipLabels.set(sp.partnerId, (sibPartner?.gender === 'male' ? 'Nagybácsi' : 'Nagynéni') + ' (házastárs)' + status);
+                        }
+                    });
+                });
+            }
+        });
+        
         // Oldalági rokonok megjelölése (akik nem egyenesági és nincs még címkéjük)
         treeData.nodes.forEach(node => {
             if (!relationshipLabels.has(node.id)) {
@@ -998,7 +1037,11 @@ function buildGenerationLayout(sizes) {
         let attempts = 0;
         const step = horizontalSpacing;
         
-        while (occupied.has(Math.round(x / 10) * 10) && attempts < 100) {
+        // Kerekítés a horizontalSpacing felére, hogy biztosan ne legyenek átfedések
+        const slotSize = Math.round(horizontalSpacing / 2);
+        const roundToSlot = (val) => Math.round(val / slotSize) * slotSize;
+        
+        while (occupied.has(roundToSlot(x)) && attempts < 100) {
             // Alternáló keresés: jobbra, balra, jobbra+1, balra+1, ...
             attempts++;
             if (attempts % 2 === 1) {
@@ -1008,7 +1051,7 @@ function buildGenerationLayout(sizes) {
             }
         }
         
-        occupied.add(Math.round(x / 10) * 10);
+        occupied.add(roundToSlot(x));
         return x;
     };
     
@@ -1286,16 +1329,22 @@ function buildGenerationLayout(sizes) {
                 }
                 
                 // Összes gyerek szélessége
+                // FONTOS: Különböző családi egységek között is kell távolság!
+                const familyGap = horizontalSpacing * 0.5; // Extra távolság a családi egységek között
                 const totalWidth = units.reduce((sum, unit) => 
-                    sum + unit.members.length * horizontalSpacing, 0);
+                    sum + unit.members.length * horizontalSpacing, 0) + (units.length > 1 ? (units.length - 1) * familyGap : 0);
                 
                 let currentX = centerX - totalWidth / 2 + horizontalSpacing / 2;
                 
-                units.forEach(unit => {
+                units.forEach((unit, unitIdx) => {
                     unit.members.forEach((id, idx) => {
                         positionPerson(id, currentX + idx * horizontalSpacing, gen);
                     });
                     currentX += unit.members.length * horizontalSpacing;
+                    // Extra távolság a következő családi egység előtt
+                    if (unitIdx < units.length - 1) {
+                        currentX += familyGap;
+                    }
                 });
             });
             

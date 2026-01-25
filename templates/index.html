@@ -55,7 +55,7 @@
                 <button class="btn btn-primary" id="add-person-btn">
                     <i class="fas fa-plus"></i> <span class="btn-text">Új személy</span>
                 </button>
-                <span class="version-badge" title="Verzió">v:d648b59</span>
+                <span class="version-badge" title="Verzió">v:6f9b950</span>
             </div>
         </nav>
 
@@ -211,6 +211,19 @@
                 <div class="settings-container">
                     <h2>Megjelenítési beállítások</h2>
                     
+                    <div class="settings-section">
+                        <h3><i class="fas fa-user-circle"></i> Alapértelmezett gyökérszemély</h3>
+                        <div class="settings-grid">
+                            <div class="setting-item" style="grid-column: span 2;">
+                                <label>Gyökérszemély (automatikus betöltés)</label>
+                                <select id="setting-default-root-person">
+                                    <option value="">-- Nincs beállítva --</option>
+                                </select>
+                                <small style="color: #666; margin-top: 5px; display: block;">A következő belépéskor automatikusan ez a személy lesz a gyökér.</small>
+                            </div>
+                        </div>
+                    </div>
+
                     <div class="settings-section">
                         <h3><i class="fas fa-palette"></i> Színek</h3>
                         <div class="settings-grid">
