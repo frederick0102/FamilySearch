@@ -120,6 +120,13 @@ function renderTree() {
     // Családok összegyűjtése
     const familyChildLinks = new Map(); // familyId -> { parents: [], children: [] }
     
+    // Debug info összegyűjtése
+    const debugInfo = {
+        disconnectedFamilies: [],
+        missingParents: [],
+        missingChildren: []
+    };
+    
     layoutLinks.filter(l => l.type === 'parent-child').forEach(link => {
         const familyId = link.familyId;
         if (!familyId) return;
@@ -146,14 +153,44 @@ function renderTree() {
             .map(id => positionedNodes.find(n => n.id === id))
             .filter(Boolean);
         
-        if (parentPositions.length === 0 || childIds.length === 0) return;
+        // Debug: hiányzó szülők
+        if (parentPositions.length === 0) {
+            const parentNames = parentIds.map(id => {
+                const p = treeData.nodes.find(n => n.id === id);
+                return p ? p.name : `ID:${id}`;
+            });
+            debugInfo.missingParents.push({
+                familyId,
+                parentIds,
+                parentNames,
+                reason: 'Szülők nem pozícionáltak'
+            });
+            console.warn(`⚠️ Családfa hiba [Family ${familyId}]: Szülők (${parentNames.join(', ')}) nincsenek pozícionálva`);
+            return;
+        }
+        
+        if (childIds.length === 0) return;
         
         // Gyerekek pozíciói
         const childPositions = childIds
             .map(id => positionedNodes.find(n => n.id === id))
             .filter(Boolean);
         
-        if (childPositions.length === 0) return;
+        // Debug: hiányzó gyerekek
+        if (childPositions.length === 0) {
+            const childNames = childIds.map(id => {
+                const c = treeData.nodes.find(n => n.id === id);
+                return c ? c.name : `ID:${id}`;
+            });
+            debugInfo.missingChildren.push({
+                familyId,
+                childIds,
+                childNames,
+                reason: 'Gyerekek nem pozícionáltak'
+            });
+            console.warn(`⚠️ Családfa hiba [Family ${familyId}]: Gyerekek (${childNames.join(', ')}) nincsenek pozícionálva`);
+            return;
+        }
         
         // Szülőpár középpontja
         const parentCenterX = parentPositions.reduce((sum, p) => sum + p.x, 0) / parentPositions.length;
@@ -194,6 +231,15 @@ function renderTree() {
                 .style('fill', 'none');
         }
         
+        // Gyerekek X pozícióinak szélső értékei
+        const childLeftX = Math.min(...childPositions.map(c => c.x));
+        const childRightX = Math.max(...childPositions.map(c => c.x));
+        
+        // A vízszintes vonal szélei: a szülők középpontja és a gyerekek X tartománya
+        // Ha az egyetlen gyerek nincs a szülők alatt, a vonalnak el kell érnie hozzá
+        const lineLeftX = Math.min(parentCenterX, childLeftX);
+        const lineRightX = Math.max(parentCenterX, childRightX);
+        
         // A középpontból lefelé a gyerekek vízszintes vonalának szintjéig
         linksGroup.append('path')
             .attr('class', 'tree-link junction-down')
@@ -202,14 +248,13 @@ function renderTree() {
             .style('stroke-width', width)
             .style('fill', 'none');
         
-        // Ha több gyerek van, vízszintes vonal a gyerekek között
-        if (childPositions.length > 1) {
-            const leftX = Math.min(...childPositions.map(c => c.x));
-            const rightX = Math.max(...childPositions.map(c => c.x));
-            
+        // Vízszintes vonal a gyerekek szintjén
+        // MINDIG rajzoljuk, ha a szülők középpontja és a gyerekek X pozíciója eltér
+        // Ez biztosítja, hogy egyetlen gyerek is összekötve legyen
+        if (lineLeftX !== lineRightX) {
             linksGroup.append('path')
                 .attr('class', 'tree-link children-horizontal')
-                .attr('d', `M${leftX},${childrenLineY} L${rightX},${childrenLineY}`)
+                .attr('d', `M${lineLeftX},${childrenLineY} L${lineRightX},${childrenLineY}`)
                 .style('stroke', color)
                 .style('stroke-width', width)
                 .style('fill', 'none');
@@ -296,9 +341,26 @@ function renderTree() {
         .attr('rx', settings.card_border_radius || 8)
         .attr('ry', settings.card_border_radius || 8)
         .style('fill', d => getNodeColor(d))
-        .style('stroke', d => d3.color(getNodeColor(d)).darker(0.3))
-        .style('stroke-width', 2)
+        .style('stroke', d => {
+            // Egyenesági személyek arany kerettel
+            if (d.isDirectLine) {
+                return '#FFD700'; // Arany szín
+            }
+            return d3.color(getNodeColor(d)).darker(0.3);
+        })
+        .style('stroke-width', d => d.isDirectLine ? 3 : 2)
         .style('opacity', d => d.is_alive ? 1 : (settings.deceased_opacity || 0.7));
+    
+    // Rokonsági fok címke (bal felső sarokban)
+    nodes.append('text')
+        .attr('x', -cardWidth / 2 + 5)
+        .attr('y', -cardHeight / 2 + 12)
+        .attr('text-anchor', 'start')
+        .style('font-family', settings.font_family || 'Arial, sans-serif')
+        .style('font-size', '9px')
+        .style('font-weight', '500')
+        .style('fill', d => d.isDirectLine ? '#FFD700' : 'rgba(255,255,255,0.7)')
+        .text(d => d.relationLabel || '');
     
     // Profilkép (opcionális)
     if (settings.show_photos !== false) {
@@ -377,6 +439,170 @@ function renderTree() {
         .style('font-size', '14px')
         .style('fill', 'rgba(255,255,255,0.8)')
         .text('\uf654'); // cross icon
+    
+    // ==================== INTERAKTÍV + GOMBOK ====================
+    // Szülő hozzáadása gomb (felül)
+    const addButtons = nodes.append('g')
+        .attr('class', 'add-buttons')
+        .style('opacity', 0);
+    
+    // Szülő hozzáadása (felül - középen)
+    addButtons.append('g')
+        .attr('class', 'add-parent-btn')
+        .attr('transform', `translate(0, ${-cardHeight/2 - 25})`)
+        .style('cursor', 'pointer')
+        .on('click', (event, d) => {
+            event.stopPropagation();
+            openAddRelativeModal(d.id, 'parent');
+        })
+        .call(g => {
+            g.append('circle')
+                .attr('r', 14)
+                .style('fill', '#27ae60')
+                .style('stroke', '#fff')
+                .style('stroke-width', 2);
+            g.append('text')
+                .attr('text-anchor', 'middle')
+                .attr('dy', '0.35em')
+                .style('fill', '#fff')
+                .style('font-size', '16px')
+                .style('font-weight', 'bold')
+                .text('+');
+        })
+        .append('title').text('Szülő hozzáadása');
+    
+    // Partner hozzáadása (jobbra)
+    addButtons.append('g')
+        .attr('class', 'add-partner-btn')
+        .attr('transform', `translate(${cardWidth/2 + 25}, 0)`)
+        .style('cursor', 'pointer')
+        .on('click', (event, d) => {
+            event.stopPropagation();
+            openAddRelativeModal(d.id, 'partner');
+        })
+        .call(g => {
+            g.append('circle')
+                .attr('r', 14)
+                .style('fill', '#e74c3c')
+                .style('stroke', '#fff')
+                .style('stroke-width', 2);
+            g.append('text')
+                .attr('text-anchor', 'middle')
+                .attr('dy', '0.35em')
+                .style('fill', '#fff')
+                .style('font-size', '16px')
+                .style('font-weight', 'bold')
+                .text('+');
+        })
+        .append('title').text('Partner hozzáadása');
+    
+    // Gyermek hozzáadása (alul - csak ha van partnere)
+    addButtons.append('g')
+        .attr('class', 'add-child-btn')
+        .attr('transform', `translate(0, ${cardHeight/2 + 25})`)
+        .style('cursor', 'pointer')
+        .on('click', (event, d) => {
+            event.stopPropagation();
+            openAddRelativeModal(d.id, 'child');
+        })
+        .call(g => {
+            g.append('circle')
+                .attr('r', 14)
+                .style('fill', '#3498db')
+                .style('stroke', '#fff')
+                .style('stroke-width', 2);
+            g.append('text')
+                .attr('text-anchor', 'middle')
+                .attr('dy', '0.35em')
+                .style('fill', '#fff')
+                .style('font-size', '16px')
+                .style('font-weight', 'bold')
+                .text('+');
+        })
+        .append('title').text('Gyermek hozzáadása');
+    
+    // Testvér hozzáadása (balra - csak ha vannak szülei)
+    addButtons.append('g')
+        .attr('class', 'add-sibling-btn')
+        .attr('transform', `translate(${-cardWidth/2 - 25}, 0)`)
+        .style('cursor', 'pointer')
+        .style('display', d => {
+            // Csak akkor jelenjen meg, ha van parent_family_id
+            const person = treeData.nodes.find(n => n.id === d.id);
+            return person?.parent_family_id ? 'block' : 'none';
+        })
+        .on('click', (event, d) => {
+            event.stopPropagation();
+            openAddRelativeModal(d.id, 'sibling');
+        })
+        .call(g => {
+            g.append('circle')
+                .attr('r', 14)
+                .style('fill', '#9b59b6')
+                .style('stroke', '#fff')
+                .style('stroke-width', 2);
+            g.append('text')
+                .attr('text-anchor', 'middle')
+                .attr('dy', '0.35em')
+                .style('fill', '#fff')
+                .style('font-size', '16px')
+                .style('font-weight', 'bold')
+                .text('+');
+        })
+        .append('title').text('Testvér hozzáadása');
+    
+    // Gombok megjelenítése hover-re
+    nodes.on('mouseenter', function(event, d) {
+        d3.select(this).select('.add-buttons')
+            .transition()
+            .duration(200)
+            .style('opacity', 1);
+        showTooltip(event, { data: d });
+    })
+    .on('mouseleave', function() {
+        d3.select(this).select('.add-buttons')
+            .transition()
+            .duration(200)
+            .style('opacity', 0);
+        hideTooltip();
+    });
+
+    // Debug információk összefoglalása
+    if (debugInfo.missingParents.length > 0 || debugInfo.missingChildren.length > 0) {
+        console.group('🔍 Családfa debug információk');
+        
+        if (debugInfo.missingParents.length > 0) {
+            console.warn('Hiányzó/nem pozícionált szülők:');
+            debugInfo.missingParents.forEach(info => {
+                console.warn(`  - Family ${info.familyId}: ${info.parentNames.join(', ')} - ${info.reason}`);
+            });
+        }
+        
+        if (debugInfo.missingChildren.length > 0) {
+            console.warn('Hiányzó/nem pozícionált gyerekek:');
+            debugInfo.missingChildren.forEach(info => {
+                console.warn(`  - Family ${info.familyId}: ${info.childNames.join(', ')} - ${info.reason}`);
+            });
+        }
+        
+        console.groupEnd();
+        
+        // Vizuális figyelmeztetés ikon a fán (bal felső sarokban)
+        g.append('g')
+            .attr('class', 'debug-warning')
+            .attr('transform', `translate(${-width/2 + 20}, ${-height/2 + 20})`)
+            .append('text')
+            .attr('x', 0)
+            .attr('y', 0)
+            .style('font-size', '24px')
+            .style('cursor', 'pointer')
+            .text('⚠️')
+            .on('click', () => {
+                alert(`Családfa figyelmeztetés:\n\n` +
+                    `Néhány vonal nem rajzolható meg, mert a szülők vagy gyerekek nincsenek megfelelően pozícionálva.\n\n` +
+                    `Részletek a böngésző konzoljában (F12 -> Console).`);
+            });
+    }
     
     // Középre igazítás
     centerTree();
@@ -535,6 +761,130 @@ function buildGenerationLayout(sizes) {
         generations.set(id, gen - minGen);
     });
     
+    // ============ 2b. EGYENESÁGI ÉS ROKONSÁGI FOK SZÁMÍTÁSA ============
+    // A gyökérszemélyhez képest számoljuk az egyenesági leszármazást és a rokonsági fokot
+    const directLineage = new Set(); // egyenesági ősök és leszármazottak
+    const relationshipLabels = new Map(); // person_id -> rokonsági megnevezés
+    
+    // Segédfüggvény: magyar rokonsági megnevezések
+    const getRelationshipLabel = (genDiff, isDirectLine, gender, isSibling = false, siblingLineGenDiff = 0) => {
+        if (genDiff === 0 && !isSibling) return 'Én';
+        
+        const isMale = gender === 'male';
+        
+        // Egyenesági ősök (negatív generáció = felmenők)
+        if (isDirectLine && genDiff < 0) {
+            const absGen = Math.abs(genDiff);
+            if (absGen === 1) return isMale ? 'Apa' : 'Anya';
+            if (absGen === 2) return isMale ? 'Nagyapa' : 'Nagymama';
+            if (absGen === 3) return isMale ? 'Dédapa' : 'Dédmama';
+            if (absGen === 4) return isMale ? 'Ükapa' : 'Ükmama';
+            if (absGen === 5) return isMale ? 'Szépapa' : 'Szépmama';
+            return `${absGen}. ős (${isMale ? 'férfi' : 'nő'})`;
+        }
+        
+        // Egyenesági leszármazottak (pozitív generáció = lemenők)
+        if (isDirectLine && genDiff > 0) {
+            if (genDiff === 1) return isMale ? 'Fiú' : 'Lány';
+            if (genDiff === 2) return isMale ? 'Unoka (fiú)' : 'Unoka (lány)';
+            if (genDiff === 3) return isMale ? 'Dédunoka (fiú)' : 'Dédunoka (lány)';
+            if (genDiff === 4) return isMale ? 'Ükunoka (fiú)' : 'Ükunoka (lány)';
+            return `${genDiff}. leszármazott`;
+        }
+        
+        // Testvérek és oldalági rokonok
+        if (isSibling && siblingLineGenDiff === 0) {
+            return isMale ? 'Fivér' : 'Nővér';
+        }
+        
+        // Oldalági rokonok - nagybácsi/nagynéni vonal
+        if (genDiff < 0) {
+            const absGen = Math.abs(genDiff);
+            if (absGen === 1) return isMale ? 'Nagybácsi' : 'Nagynéni';
+            if (absGen === 2) return isMale ? 'Nagybácsi (nagy-)' : 'Nagynéni (nagy-)';
+            return `Oldalági felmenő (${absGen}. gen)`;
+        }
+        
+        // Oldalági leszármazottak - unokaöcs/unokahúg vonal
+        if (genDiff > 0) {
+            if (genDiff === 1) return isMale ? 'Unokaöcs' : 'Unokahúg';
+            if (genDiff === 2) return isMale ? 'Unokaöcs gyereke' : 'Unokahúg gyereke';
+            return `Oldalági leszármazott (${genDiff}. gen)`;
+        }
+        
+        // Ugyanaz a generáció (unokatestvérek)
+        return isMale ? 'Unokatestvér (fiú)' : 'Unokatestvér (lány)';
+    };
+    
+    // Egyenesági vonal meghatározása a gyökértől
+    const rootGen = rootPersonId ? 0 : (generations.get(startId) || 0);
+    const rootActualId = rootPersonId || startId;
+    
+    // BFS az egyenesági vonal meghatározásához
+    const findDirectLineage = () => {
+        directLineage.add(rootActualId);
+        relationshipLabels.set(rootActualId, 'Én');
+        
+        // Felmenők bejárása (csak egyenes ág)
+        let currentId = rootActualId;
+        let genDiff = 0;
+        
+        const traverseAncestors = (personId, depth) => {
+            const parents = parentsOf.get(personId) || [];
+            parents.forEach(parentId => {
+                directLineage.add(parentId);
+                const parent = treeData.nodes.find(n => n.id === parentId);
+                relationshipLabels.set(parentId, getRelationshipLabel(-depth, true, parent?.gender));
+                traverseAncestors(parentId, depth + 1);
+            });
+        };
+        traverseAncestors(rootActualId, 1);
+        
+        // Leszármazottak bejárása (csak egyenes ág)
+        const traverseDescendants = (personId, depth) => {
+            const children = childrenOf.get(personId) || [];
+            children.forEach(childId => {
+                directLineage.add(childId);
+                const child = treeData.nodes.find(n => n.id === childId);
+                relationshipLabels.set(childId, getRelationshipLabel(depth, true, child?.gender));
+                traverseDescendants(childId, depth + 1);
+            });
+        };
+        traverseDescendants(rootActualId, 1);
+        
+        // Partnerek megjelölése
+        const partners = partnersOf.get(rootActualId) || [];
+        partners.forEach(p => {
+            const partner = treeData.nodes.find(n => n.id === p.partnerId);
+            const status = p.status === 'divorced' ? ' (elvált)' : '';
+            relationshipLabels.set(p.partnerId, (partner?.gender === 'male' ? 'Férj' : 'Feleség') + status);
+        });
+        
+        // Testvérek megjelölése
+        const myParentFamily = treeData.nodes.find(n => n.id === rootActualId)?.parent_family_id;
+        if (myParentFamily && familyMap.has(myParentFamily)) {
+            const siblings = familyMap.get(myParentFamily).children.filter(id => id !== rootActualId);
+            siblings.forEach(sibId => {
+                const sib = treeData.nodes.find(n => n.id === sibId);
+                if (!relationshipLabels.has(sibId)) {
+                    relationshipLabels.set(sibId, getRelationshipLabel(0, false, sib?.gender, true, 0));
+                }
+            });
+        }
+        
+        // Oldalági rokonok megjelölése (akik nem egyenesági és nincs még címkéjük)
+        treeData.nodes.forEach(node => {
+            if (!relationshipLabels.has(node.id)) {
+                const nodeGen = generations.get(node.id) || 0;
+                const rootNormalizedGen = generations.get(rootActualId) || 0;
+                const genDiff = nodeGen - rootNormalizedGen;
+                relationshipLabels.set(node.id, getRelationshipLabel(genDiff, false, node.gender));
+            }
+        });
+    };
+    
+    findDirectLineage();
+
     // ============ 3. GENERÁCIÓNKÉNTI CSOPORTOSÍTÁS ============
     const genGroups = new Map();  // gen -> [person_ids]
     generations.forEach((gen, id) => {
@@ -671,7 +1021,18 @@ function buildGenerationLayout(sizes) {
         const y = gen * verticalSpacing;
         const finalX = findFreeSlot(x, gen);
         
-        positionedNodes.push({ ...person, x: finalX, y });
+        // Egyenesági és rokonsági fok hozzáadása
+        const isDirectLine = directLineage.has(personId);
+        const relationLabel = relationshipLabels.get(personId) || '';
+        
+        positionedNodes.push({ 
+            ...person, 
+            x: finalX, 
+            y,
+            isDirectLine,
+            relationLabel,
+            generation: gen
+        });
         nodePositions.set(personId, { x: finalX, y });
         
         return { x: finalX, y };
@@ -894,12 +1255,34 @@ function buildGenerationLayout(sizes) {
                 const p2Pos = nodePositions.get(family.person2_id);
                 
                 let centerX = 0;
+                let hasValidParentPos = false;
+                
                 if (p1Pos && p2Pos) {
                     centerX = (p1Pos.x + p2Pos.x) / 2;
+                    hasValidParentPos = true;
                 } else if (p1Pos) {
                     centerX = p1Pos.x;
+                    hasValidParentPos = true;
                 } else if (p2Pos) {
                     centerX = p2Pos.x;
+                    hasValidParentPos = true;
+                }
+                
+                // Debug: ha a szülők nincsenek pozícionálva
+                if (!hasValidParentPos) {
+                    const p1Name = treeData.nodes.find(n => n.id === family.person1_id)?.name || `ID:${family.person1_id}`;
+                    const p2Name = treeData.nodes.find(n => n.id === family.person2_id)?.name || `ID:${family.person2_id}`;
+                    console.warn(`⚠️ Családfa hiba [Family ${parentFamilyId}]: A szülők (${p1Name}, ${p2Name}) nincsenek pozícionálva, a gyerekek nem köthetők össze velük.`);
+                    // Próbáljunk fallback pozíciót használni
+                    // Keressük meg az előző generáció átlagos X pozícióját
+                    const prevGen = gen - 1;
+                    const prevGenNodes = positionedNodes.filter(n => {
+                        const nodeGen = Array.from(generations.entries()).find(([id, g]) => id === n.id)?.[1];
+                        return nodeGen === prevGen;
+                    });
+                    if (prevGenNodes.length > 0) {
+                        centerX = prevGenNodes.reduce((sum, n) => sum + n.x, 0) / prevGenNodes.length;
+                    }
                 }
                 
                 // Összes gyerek szélessége
@@ -1016,23 +1399,30 @@ function getLinkPath(d) {
 
 // ==================== CSOMÓPONT SZÍN ====================
 function getNodeColor(data) {
+    // Egyenesági személyek erősebb, oldalági rokonok halványabb színt kapnak
+    const isDirectLine = data.isDirectLine === true;
+    const opacityMultiplier = isDirectLine ? 1.0 : 0.7;
+    
     // Elhunyt személyek szürkébb színt kapnak
     if (!data.is_alive) {
         if (data.gender === 'male') {
-            return '#6a8cad'; // Szürkés kék
+            return isDirectLine ? '#5a7a9d' : '#4a6a8d'; // Szürkés kék (egyenesági erősebb)
         } else if (data.gender === 'female') {
-            return '#a06a8c'; // Szürkés rózsaszín
+            return isDirectLine ? '#905a7c' : '#804a6c'; // Szürkés rózsaszín
         }
-        return '#707070'; // Szürke
+        return isDirectLine ? '#606060' : '#505050'; // Szürke
     }
     
-    // Élő személyek eredeti színei
+    // Élő személyek - egyenesági erősebb, oldalági halványabb
     if (data.gender === 'male') {
-        return settings.male_color || '#4A90D9';
+        const baseColor = settings.male_color || '#4A90D9';
+        return isDirectLine ? baseColor : d3.color(baseColor).darker(0.3).toString();
     } else if (data.gender === 'female') {
-        return settings.female_color || '#D94A8C';
+        const baseColor = settings.female_color || '#D94A8C';
+        return isDirectLine ? baseColor : d3.color(baseColor).darker(0.3).toString();
     }
-    return settings.unknown_color || '#808080';
+    const baseColor = settings.unknown_color || '#808080';
+    return isDirectLine ? baseColor : d3.color(baseColor).darker(0.3).toString();
 }
 
 // ==================== TOOLTIP ====================
@@ -1230,3 +1620,273 @@ function formatDate(dateStr) {
         day: 'numeric' 
     });
 }
+
+// ==================== ROKON HOZZÁADÁSA MODAL ====================
+function openAddRelativeModal(personId, relationType) {
+    const person = persons.find(p => p.id === personId);
+    if (!person) {
+        showNotification('Személy nem található', 'error');
+        return;
+    }
+    
+    const personName = `${person.first_name} ${person.last_name}`;
+    
+    // Típus szövegek
+    const typeLabels = {
+        parent: { title: 'Szülő hozzáadása', desc: `${personName} szülője` },
+        partner: { title: 'Partner hozzáadása', desc: `${personName} partnere` },
+        child: { title: 'Gyermek hozzáadása', desc: `${personName} gyermeke` },
+        sibling: { title: 'Testvér hozzáadása', desc: `${personName} testvére` }
+    };
+    
+    const label = typeLabels[relationType] || { title: 'Rokon hozzáadása', desc: '' };
+    
+    // Modal HTML
+    const modalHtml = `
+        <div class="modal-overlay add-relative-modal" id="add-relative-modal">
+            <div class="modal" style="max-width: 500px;">
+                <div class="modal-header">
+                    <h2>${label.title}</h2>
+                    <button class="modal-close" onclick="closeAddRelativeModal()">
+                        <i class="fas fa-times"></i>
+                    </button>
+                </div>
+                <div class="modal-content">
+                    <p style="margin-bottom: 20px; color: var(--text-secondary);">${label.desc}</p>
+                    
+                    <div class="form-group">
+                        <label>Vezetéknév *</label>
+                        <input type="text" id="add-rel-lastname" placeholder="Vezetéknév" required>
+                    </div>
+                    
+                    <div class="form-group">
+                        <label>Keresztnév *</label>
+                        <input type="text" id="add-rel-firstname" placeholder="Keresztnév" required>
+                    </div>
+                    
+                    <div class="form-group">
+                        <label>Nem *</label>
+                        <select id="add-rel-gender">
+                            <option value="">Válassz...</option>
+                            <option value="male">Férfi</option>
+                            <option value="female">Nő</option>
+                        </select>
+                    </div>
+                    
+                    <div class="form-group">
+                        <label>Születési dátum</label>
+                        <input type="date" id="add-rel-birthdate">
+                    </div>
+                    
+                    ${relationType === 'parent' ? `
+                    <div class="form-group">
+                        <label>Szülő típusa</label>
+                        <div class="radio-group" style="display: flex; gap: 20px; margin-top: 8px;">
+                            <label style="display: flex; align-items: center; gap: 8px; cursor: pointer;">
+                                <input type="radio" name="parent-type" value="father" id="parent-type-father">
+                                <span>Apa</span>
+                            </label>
+                            <label style="display: flex; align-items: center; gap: 8px; cursor: pointer;">
+                                <input type="radio" name="parent-type" value="mother" id="parent-type-mother">
+                                <span>Anya</span>
+                            </label>
+                        </div>
+                        <p style="font-size: 12px; color: var(--text-secondary); margin-top: 8px;">
+                            A szülő típusa automatikusan beállítja a nemet és létrehozza a szülői kapcsolatot.
+                        </p>
+                    </div>
+                    ` : ''}
+                    
+                    ${relationType === 'partner' ? `
+                    <div class="form-group">
+                        <label>Kapcsolat státusza</label>
+                        <select id="add-rel-marriage-status">
+                            <option value="married">Házas</option>
+                            <option value="engaged">Jegyes</option>
+                            <option value="partner">Élettárs</option>
+                            <option value="divorced">Elvált</option>
+                        </select>
+                    </div>
+                    ` : ''}
+                </div>
+                <div class="modal-footer">
+                    <button class="btn btn-secondary" onclick="closeAddRelativeModal()">Mégse</button>
+                    <button class="btn btn-primary" onclick="saveNewRelative(${personId}, '${relationType}')">
+                        <i class="fas fa-plus"></i> Hozzáadás
+                    </button>
+                </div>
+            </div>
+        </div>
+    `;
+    
+    // Modal hozzáadása a DOM-hoz
+    document.body.insertAdjacentHTML('beforeend', modalHtml);
+    
+    // Szülő típus radio gombok kezelése
+    if (relationType === 'parent') {
+        document.getElementById('parent-type-father')?.addEventListener('change', () => {
+            document.getElementById('add-rel-gender').value = 'male';
+        });
+        document.getElementById('parent-type-mother')?.addEventListener('change', () => {
+            document.getElementById('add-rel-gender').value = 'female';
+        });
+    }
+    
+    // Focus az első mezőre
+    document.getElementById('add-rel-lastname').focus();
+}
+
+function closeAddRelativeModal() {
+    const modal = document.getElementById('add-relative-modal');
+    if (modal) {
+        modal.remove();
+    }
+}
+
+async function saveNewRelative(personId, relationType) {
+    const lastName = document.getElementById('add-rel-lastname').value.trim();
+    const firstName = document.getElementById('add-rel-firstname').value.trim();
+    const gender = document.getElementById('add-rel-gender').value;
+    const birthDate = document.getElementById('add-rel-birthdate').value;
+    
+    if (!lastName || !firstName) {
+        showNotification('Név megadása kötelező!', 'error');
+        return;
+    }
+    
+    if (!gender) {
+        showNotification('Nem megadása kötelező!', 'error');
+        return;
+    }
+    
+    try {
+        // 1. Új személy létrehozása
+        const newPersonData = {
+            last_name: lastName,
+            first_name: firstName,
+            gender: gender,
+            birth_date: birthDate || null,
+            is_alive: true
+        };
+        
+        const newPerson = await API.post('/persons', newPersonData);
+        
+        // 2. Kapcsolat létrehozása a típus szerint
+        if (relationType === 'parent') {
+            await createParentRelation(personId, newPerson.id, gender);
+        } else if (relationType === 'partner') {
+            const status = document.getElementById('add-rel-marriage-status')?.value || 'married';
+            await createPartnerRelation(personId, newPerson.id, status);
+        } else if (relationType === 'child') {
+            await createChildRelation(personId, newPerson.id);
+        } else if (relationType === 'sibling') {
+            await createSiblingRelation(personId, newPerson.id);
+        }
+        
+        showNotification(`${firstName} ${lastName} sikeresen hozzáadva!`, 'success');
+        closeAddRelativeModal();
+        
+        // Adatok frissítése
+        await loadPersons();
+        await updateTree();
+        
+    } catch (error) {
+        console.error('Hiba a rokon hozzáadásakor:', error);
+        showNotification('Hiba történt: ' + (error.message || 'Ismeretlen hiba'), 'error');
+    }
+}
+
+async function createParentRelation(childId, parentId, parentGender) {
+    const child = persons.find(p => p.id === childId);
+    
+    // Ellenőrizzük, van-e már a gyereknek parent_family_id-ja
+    if (child.parent_family_id) {
+        // Van már családja, hozzáadjuk az új szülőt
+        const marriages = await API.get('/marriages');
+        const family = marriages.find(m => m.id === child.parent_family_id);
+        
+        if (family) {
+            // Frissítjük a családot az új szülővel
+            const updateData = {};
+            if (!family.person1_id) {
+                updateData.person1_id = parentId;
+            } else if (!family.person2_id) {
+                updateData.person2_id = parentId;
+            } else {
+                // Mindkét szülő pozíció foglalt
+                showNotification('A gyereknek már két szülője van!', 'warning');
+                return;
+            }
+            
+            await API.put(`/marriages/${family.id}`, updateData);
+        }
+    } else {
+        // Nincs még családja, létrehozunk egyet
+        const marriageData = {
+            person1_id: parentId,
+            person2_id: null,
+            status: 'active'
+        };
+        
+        const newMarriage = await API.post('/marriages', marriageData);
+        
+        // Gyerek hozzárendelése a családhoz
+        await API.put(`/persons/${childId}`, {
+            parent_family_id: newMarriage.id
+        });
+    }
+}
+
+async function createPartnerRelation(personId, partnerId, status) {
+    // Házasság/kapcsolat létrehozása
+    const marriageData = {
+        person1_id: personId,
+        person2_id: partnerId,
+        status: status
+    };
+    
+    await API.post('/marriages', marriageData);
+}
+
+async function createChildRelation(parentId, childId) {
+    // Keressük meg a szülő házasságát
+    const marriages = await API.get('/marriages');
+    const parentMarriage = marriages.find(m => 
+        m.person1_id === parentId || m.person2_id === parentId
+    );
+    
+    if (parentMarriage) {
+        // Van már házasság, hozzáadjuk a gyereket
+        await API.put(`/persons/${childId}`, {
+            parent_family_id: parentMarriage.id
+        });
+    } else {
+        // Nincs házasság, létrehozunk egy "egyedülálló szülő" családot
+        const marriageData = {
+            person1_id: parentId,
+            person2_id: null,
+            status: 'single_parent'
+        };
+        
+        const newMarriage = await API.post('/marriages', marriageData);
+        
+        await API.put(`/persons/${childId}`, {
+            parent_family_id: newMarriage.id
+        });
+    }
+}
+
+async function createSiblingRelation(siblingId, newSiblingId) {
+    const sibling = persons.find(p => p.id === siblingId);
+    
+    if (!sibling.parent_family_id) {
+        showNotification('A testvérnek nincs szülői családja!', 'error');
+        return;
+    }
+    
+    // Az új testvért ugyanahhoz a családhoz rendeljük
+    await API.put(`/persons/${newSiblingId}`, {
+        parent_family_id: sibling.parent_family_id
+    });
+}
+

@@ -162,6 +162,14 @@
     border-top-color: var(--border-color);
 }
 
+[data-theme="dark"] .modal-overlay .modal {
+    background: var(--card-bg);
+}
+
+[data-theme="dark"] .modal-overlay .modal-close:hover {
+    background: #2d3a5c;
+}
+
 /* Sötét mód - Select és dropdown */
 [data-theme="dark"] option {
     background: #0f0f1a;
@@ -1029,6 +1037,117 @@ body {
     display: flex;
 }
 
+/* Modal overlay - új modális ablakok */
+.modal-overlay {
+    position: fixed;
+    top: 0;
+    left: 0;
+    width: 100%;
+    height: 100%;
+    background: rgba(0,0,0,0.6);
+    z-index: 3000;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    animation: fadeIn 0.2s ease;
+}
+
+.modal-overlay .modal {
+    display: flex;
+    position: relative;
+    background: var(--card-bg);
+    border-radius: var(--border-radius);
+    width: 90%;
+    max-height: 90vh;
+    flex-direction: column;
+    box-shadow: var(--shadow-lg);
+    animation: slideIn 0.2s ease;
+}
+
+@keyframes fadeIn {
+    from { opacity: 0; }
+    to { opacity: 1; }
+}
+
+@keyframes slideIn {
+    from { transform: translateY(-20px); opacity: 0; }
+    to { transform: translateY(0); opacity: 1; }
+}
+
+.modal-overlay .modal-header {
+    padding: 20px;
+    border-bottom: 1px solid var(--border-color);
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+}
+
+.modal-overlay .modal-header h2 {
+    margin: 0;
+    font-size: 1.3rem;
+    color: var(--primary-color);
+}
+
+.modal-overlay .modal-close {
+    background: none;
+    border: none;
+    font-size: 1.2rem;
+    cursor: pointer;
+    color: var(--text-muted);
+    padding: 8px;
+    border-radius: 50%;
+    transition: var(--transition);
+}
+
+.modal-overlay .modal-close:hover {
+    background: var(--bg-color);
+    color: var(--danger-color);
+}
+
+.modal-overlay .modal-content {
+    padding: 20px;
+    overflow-y: auto;
+    flex: 1;
+    max-height: calc(90vh - 140px);
+}
+
+.modal-overlay .modal-footer {
+    padding: 15px 20px;
+    border-top: 1px solid var(--border-color);
+    display: flex;
+    justify-content: flex-end;
+    gap: 10px;
+}
+
+/* Form groups a modal-ban */
+.modal-overlay .form-group {
+    margin-bottom: 15px;
+}
+
+.modal-overlay .form-group label {
+    display: block;
+    margin-bottom: 5px;
+    font-weight: 500;
+    color: var(--text-color);
+}
+
+.modal-overlay .form-group input,
+.modal-overlay .form-group select {
+    width: 100%;
+    padding: 10px 12px;
+    border: 1px solid var(--border-color);
+    border-radius: var(--border-radius);
+    font-size: 14px;
+    transition: var(--transition);
+}
+
+.modal-overlay .form-group input:focus,
+.modal-overlay .form-group select:focus {
+    outline: none;
+    border-color: var(--primary-color);
+    box-shadow: 0 0 0 3px rgba(74, 144, 217, 0.2);
+}
+
 .modal-content {
     background: white;
     border-radius: var(--border-radius);
@@ -1183,6 +1302,39 @@ body {
 .checkbox-inline input {
     width: 18px;
     height: 18px;
+}
+
+.checkbox-group {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+}
+
+.checkbox-group .checkbox-inline {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+}
+
+/* Partner szekció az alapadatoknál */
+.form-section.partner-section {
+    margin-top: 25px;
+    padding: 20px;
+    background: var(--card-bg);
+    border-radius: 8px;
+    border: 1px solid var(--border-color);
+}
+
+.form-section.partner-section h4 {
+    margin: 0 0 15px 0;
+    color: var(--text-secondary);
+    font-size: 14px;
+    font-weight: 500;
+}
+
+.form-section.partner-section h4 i {
+    color: #e74c3c;
+    margin-right: 8px;
 }
 
 /* ==================== RELATIONS SECTION ==================== */

@@ -506,6 +506,27 @@ async function openPersonModal(personId = null) {
         document.getElementById('marriages-list').innerHTML = '';
         document.getElementById('events-list').innerHTML = '';
         document.getElementById('documents-list').innerHTML = '';
+        
+        // FONTOS: Flatpickr értékek explicit törlése új személy esetén
+        // A form.reset() nem törli a flatpickr értékeket!
+        if (datePickers.birthDate) {
+            datePickers.birthDate.clear();
+        }
+        if (datePickers.deathDate) {
+            datePickers.deathDate.clear();
+        }
+        
+        // Checkboxok és disabled állapotok visszaállítása
+        const deathDateUnknown = document.getElementById('death_date_unknown');
+        const deathDateInput = document.getElementById('death_date');
+        if (deathDateUnknown) {
+            deathDateUnknown.checked = false;
+        }
+        if (deathDateInput) {
+            deathDateInput.disabled = false;
+        }
+        document.getElementById('birth_date_approximate').checked = false;
+        document.getElementById('death_date_approximate').checked = false;
     }
     
     // Első tab aktiválása
@@ -537,6 +558,17 @@ async function fillPersonForm(person) {
     document.getElementById('birth_place').value = person.birth_place || '';
     document.getElementById('birth_country').value = person.birth_country || '';
     document.getElementById('death_date_approximate').checked = person.death_date_approximate;
+    
+    // "Nem ismert" halálozási dátum kezelése
+    const deathDateUnknown = document.getElementById('death_date_unknown');
+    const deathDateInput = document.getElementById('death_date');
+    if (deathDateUnknown) {
+        deathDateUnknown.checked = person.death_date_unknown || false;
+        if (deathDateInput) {
+            deathDateInput.disabled = person.death_date_unknown || false;
+        }
+    }
+    
     document.getElementById('death_place').value = person.death_place || '';
     document.getElementById('death_country').value = person.death_country || '';
     document.getElementById('death_cause').value = person.death_cause || '';
@@ -584,22 +616,39 @@ async function fillPersonForm(person) {
 async function populateParentSelectors() {
     const fatherSelect = document.getElementById('father_id');
     const motherSelect = document.getElementById('mother_id');
+    const initialPartnerSelect = document.getElementById('initial_partner_id');
 
     // Mindig friss adatokat kérünk, hogy a legutóbb felvitt személyek is megjelenjenek
     persons = await API.get('/persons');
+
+    // Segédfüggvény: születési év kinyerése
+    const getBirthYear = (person) => {
+        if (person.birth_date) {
+            const year = new Date(person.birth_date).getFullYear();
+            return isNaN(year) ? '' : ` (${year})`;
+        }
+        return '';
+    };
 
     // Ne lehessen saját magát szülőnek kiválasztani
     const options = persons
         .filter(p => !currentPersonId || p.id !== currentPersonId)
         .map(p => {
             const genderLabel = p.gender === 'male' ? 'F' : p.gender === 'female' ? 'N' : '?';
-            return `<option value="${p.id}">${p.display_name || p.full_name} (${genderLabel})</option>`;
+            const birthYear = getBirthYear(p);
+            return `<option value="${p.id}">${p.display_name || p.full_name} (${genderLabel})${birthYear}</option>`;
         })
         .join('');
 
     const defaultOption = '<option value="">-- Válasszon --</option>';
     fatherSelect.innerHTML = defaultOption + options;
     motherSelect.innerHTML = defaultOption + options;
+    
+    // Partner választó feltöltése (ha létezik)
+    if (initialPartnerSelect) {
+        const partnerDefaultOption = '<option value="">-- Nincs partner --</option>';
+        initialPartnerSelect.innerHTML = partnerDefaultOption + options;
+    }
 }
 
 async function loadPersonRelations(personId) {
@@ -726,8 +775,9 @@ async function savePerson() {
         birth_date_approximate: formData.get('birth_date_approximate') === 'on',
         birth_place: formData.get('birth_place'),
         birth_country: formData.get('birth_country'),
-        death_date: formData.get('death_date') || null,
+        death_date: formData.get('death_date_unknown') === 'on' ? null : (formData.get('death_date') || null),
         death_date_approximate: formData.get('death_date_approximate') === 'on',
+        death_date_unknown: formData.get('death_date_unknown') === 'on',
         death_place: formData.get('death_place'),
         death_country: formData.get('death_country'),
         death_cause: formData.get('death_cause'),
@@ -750,14 +800,36 @@ async function savePerson() {
         return;
     }
     
+    // Házastárs/partner hozzáadása (ha ki van választva és ez új személy)
+    const initialPartnerId = formData.get('initial_partner_id') ? parseInt(formData.get('initial_partner_id')) : null;
+    const initialPartnerStatus = formData.get('initial_partner_status') || 'married';
+    
     try {
+        let savedPersonId = currentPersonId;
+        
         if (currentPersonId) {
             await API.put(`/persons/${currentPersonId}`, data);
             showNotification('Személy sikeresen frissítve', 'success');
         } else {
             const newPerson = await API.post('/persons', data);
+            savedPersonId = newPerson.id;
             currentPersonId = newPerson.id;
             showNotification('Személy sikeresen létrehozva', 'success');
+            
+            // Ha van kiválasztott partner és ez új személy, hozzuk létre a kapcsolatot
+            if (initialPartnerId && savedPersonId) {
+                try {
+                    await API.post('/marriages', {
+                        person1_id: savedPersonId,
+                        person2_id: initialPartnerId,
+                        relationship_type: initialPartnerStatus,
+                        status: initialPartnerStatus === 'divorced' ? 'ended' : 'active'
+                    });
+                    showNotification('Partner kapcsolat létrehozva', 'success');
+                } catch (partnerError) {
+                    console.error('Partner kapcsolat létrehozása sikertelen:', partnerError);
+                }
+            }
         }
         
         closeModal('person-modal');
@@ -811,10 +883,13 @@ function openMarriageModal(personId = null) {
     document.getElementById('marriage-person1-id').value = currentPersonId;
     document.getElementById('marriage-id').value = '';
     
-    // Partner választó feltöltése
+    // Partner választó feltöltése (születési évvel)
     const partnerSelect = document.getElementById('marriage-person2');
     partnerSelect.innerHTML = '<option value="">-- Válasszon --</option>' +
-        otherPersons.map(p => `<option value="${p.id}">${p.display_name || p.full_name}</option>`).join('');
+        otherPersons.map(p => {
+            const birthYear = p.birth_date ? ` (${new Date(p.birth_date).getFullYear()})` : '';
+            return `<option value="${p.id}">${p.display_name || p.full_name}${birthYear}</option>`;
+        }).join('');
     
     modal.classList.add('show');
 }
@@ -1330,6 +1405,8 @@ function initSearch() {
 // ==================== MODAL KEZELÉS ====================
 function closeModal(modalId) {
     document.getElementById(modalId).classList.remove('show');
+    // Flatpickr bezárása a modal bezárásakor
+    closeFlatpickrs();
 }
 
 function showConfirm(message, onConfirm, buttonConfig = null) {
@@ -1361,7 +1438,10 @@ function initModals() {
     // Close gomb kezelés
     document.querySelectorAll('.close-btn, .close-modal').forEach(btn => {
         btn.addEventListener('click', () => {
-            btn.closest('.modal').classList.remove('show');
+            const modal = btn.closest('.modal');
+            modal.classList.remove('show');
+            // Flatpickr bezárása a modal bezárásakor
+            closeFlatpickrs();
         });
     });
     
@@ -1370,8 +1450,19 @@ function initModals() {
         modal.addEventListener('click', (e) => {
             if (e.target === modal) {
                 modal.classList.remove('show');
+                // Flatpickr bezárása a modal bezárásakor
+                closeFlatpickrs();
             }
         });
+    });
+}
+
+// Flatpickr példányok bezárása
+function closeFlatpickrs() {
+    Object.values(datePickers).forEach(picker => {
+        if (picker && picker.close) {
+            picker.close();
+        }
     });
 }
 
@@ -1705,6 +1796,20 @@ document.addEventListener('DOMContentLoaded', async () => {
     initSearch();
     initDatePickers();
     initThemeToggle();
+    
+    // "Nem ismert" halálozási dátum checkbox kezelése
+    const deathDateUnknown = document.getElementById('death_date_unknown');
+    const deathDateInput = document.getElementById('death_date');
+    if (deathDateUnknown && deathDateInput) {
+        deathDateUnknown.addEventListener('change', () => {
+            if (deathDateUnknown.checked) {
+                deathDateInput.value = '';
+                deathDateInput.disabled = true;
+            } else {
+                deathDateInput.disabled = false;
+            }
+        });
+    }
     
     // Eseménykezelők - MINDIG regisztráljuk, még ha az adatok nem is töltődnek be
     document.getElementById('add-person-btn').addEventListener('click', () => openPersonModal());

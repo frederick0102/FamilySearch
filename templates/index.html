@@ -55,7 +55,7 @@
                 <button class="btn btn-primary" id="add-person-btn">
                     <i class="fas fa-plus"></i> <span class="btn-text">Új személy</span>
                 </button>
-                <span class="version-badge" title="Verzió">v:5f1c7b2</span>
+                <span class="version-badge" title="Verzió">v:d648b59</span>
             </div>
         </nav>
 
@@ -441,6 +441,28 @@
                                     </select>
                                 </div>
                             </div>
+                            
+                            <!-- Házastárs/Partner hozzáadása az alapadatoknál -->
+                            <div class="form-section partner-section">
+                                <h4><i class="fas fa-heart"></i> Házastárs / Partner (opcionális)</h4>
+                                <div class="form-row">
+                                    <div class="form-group">
+                                        <label for="initial_partner_id">Meglévő személy kiválasztása</label>
+                                        <select id="initial_partner_id" name="initial_partner_id">
+                                            <option value="">-- Nincs partner --</option>
+                                        </select>
+                                    </div>
+                                    <div class="form-group">
+                                        <label for="initial_partner_status">Kapcsolat típusa</label>
+                                        <select id="initial_partner_status" name="initial_partner_status">
+                                            <option value="married">Házas</option>
+                                            <option value="engaged">Jegyes</option>
+                                            <option value="partner">Élettárs</option>
+                                            <option value="divorced">Elvált</option>
+                                        </select>
+                                    </div>
+                                </div>
+                            </div>
                         </div>
 
                         <!-- Születési adatok tab -->
@@ -474,9 +496,15 @@
                                     <label for="death_date">Halálozási dátum</label>
                                     <input type="date" id="death_date" name="death_date">
                                 </div>
-                                <div class="form-group checkbox-inline">
-                                    <input type="checkbox" id="death_date_approximate" name="death_date_approximate">
-                                    <label for="death_date_approximate">Becsült dátum</label>
+                                <div class="form-group checkbox-group">
+                                    <div class="checkbox-inline">
+                                        <input type="checkbox" id="death_date_approximate" name="death_date_approximate">
+                                        <label for="death_date_approximate">Becsült dátum</label>
+                                    </div>
+                                    <div class="checkbox-inline">
+                                        <input type="checkbox" id="death_date_unknown" name="death_date_unknown">
+                                        <label for="death_date_unknown">Nem ismert</label>
+                                    </div>
                                 </div>
                             </div>
                             <div class="form-row">

@@ -26,6 +26,7 @@ class Person(db.Model):
     # Halálozási adatok
     death_date = db.Column(db.Date)
     death_date_approximate = db.Column(db.Boolean, default=False)
+    death_date_unknown = db.Column(db.Boolean, default=False)  # Nem ismert dátum
     death_place = db.Column(db.String(200))
     death_country = db.Column(db.String(100))
     death_cause = db.Column(db.String(500))  # Halál oka
@@ -211,6 +212,7 @@ class Person(db.Model):
             'birth_country': self.birth_country,
             'death_date': self.death_date.isoformat() if self.death_date else None,
             'death_date_approximate': self.death_date_approximate,
+            'death_date_unknown': self.death_date_unknown,
             'death_place': self.death_place,
             'death_country': self.death_country,
             'death_cause': self.death_cause,

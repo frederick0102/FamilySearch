@@ -190,6 +190,7 @@ def create_person():
         death_place=data.get('death_place'),
         death_country=data.get('death_country'),
         death_date_approximate=data.get('death_date_approximate', False),
+        death_date_unknown=data.get('death_date_unknown', False),
         death_cause=data.get('death_cause'),
         burial_place=data.get('burial_place'),
         occupation=data.get('occupation'),
@@ -234,7 +235,7 @@ def update_person(person_id):
     # Mezők frissítése
     for field in ['first_name', 'middle_name', 'last_name', 'maiden_name', 'nickname',
                   'gender', 'birth_place', 'birth_country', 'birth_date_approximate',
-                  'death_place', 'death_country', 'death_date_approximate', 'death_cause',
+                  'death_place', 'death_country', 'death_date_approximate', 'death_date_unknown', 'death_cause',
                   'burial_place', 'occupation', 'education', 'religion', 'nationality',
                   'email', 'phone', 'address', 'biography', 'notes',
                   'parent_family_id', 'adoptive_family_id', 'is_twin', 'birth_order']:
