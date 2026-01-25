@@ -1556,6 +1556,8 @@ function updateRootPersonSelector() {
 }
 
 // Alapértelmezett gyökérszemély választó frissítése a beállításokban
+let defaultRootSelectorInitialized = false;
+
 function updateDefaultRootPersonSelector() {
     const selector = document.getElementById('setting-default-root-person');
     if (!selector) return;
@@ -1568,16 +1570,34 @@ function updateDefaultRootPersonSelector() {
         return '';
     };
     
-    const currentValue = selector.value;
+    // Mentés az aktuális értékről, ha már inicializálva volt
+    const currentValue = defaultRootSelectorInitialized ? selector.value : null;
     
     selector.innerHTML = '<option value="">-- Nincs beállítva --</option>' +
         persons.map(p => `<option value="${p.id}">${p.full_name}${formatBirthYear(p)}</option>`).join('');
     
-    // Mentett érték visszaállítása
-    if (settings.default_root_person_id) {
-        selector.value = settings.default_root_person_id;
-    } else if (currentValue) {
+    // Érték beállítása: először a korábbi érték, különben a mentett
+    if (currentValue) {
         selector.value = currentValue;
+    } else if (settings.default_root_person_id) {
+        selector.value = String(settings.default_root_person_id);
+    }
+    
+    defaultRootSelectorInitialized = true;
+}
+
+// Alapértelmezett gyökérszemély mentése
+async function saveDefaultRootPerson() {
+    const selector = document.getElementById('setting-default-root-person');
+    const value = selector.value ? parseInt(selector.value) : null;
+    
+    try {
+        const response = await API.put('/settings', { default_root_person_id: value });
+        settings.default_root_person_id = value;
+        showNotification('Alapértelmezett gyökérszemély mentve!', 'success');
+    } catch (error) {
+        console.error('Mentési hiba:', error);
+        showNotification('Hiba a mentés során', 'error');
     }
 }
 
@@ -1920,7 +1940,10 @@ document.addEventListener('DOMContentLoaded', async () => {
         if (settings.default_root_person_id) {
             const rootSelector = document.getElementById('root-person');
             if (rootSelector && persons.some(p => p.id === settings.default_root_person_id)) {
-                rootSelector.value = settings.default_root_person_id;
+                rootSelector.value = String(settings.default_root_person_id);
+                // FONTOS: A tree.js rootPersonId változóját is be kell állítani!
+                rootPersonId = settings.default_root_person_id;
+                console.log('Root person beállítva:', settings.default_root_person_id);
             }
         }
     } catch (error) {

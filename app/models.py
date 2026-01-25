@@ -107,7 +107,8 @@ class Person(db.Model):
     
     @property
     def is_alive(self):
-        return self.death_date is None
+        # Ha van halálozási dátum VAGY ha ismeretlen a halál időpontja, akkor halott
+        return self.death_date is None and not self.death_date_unknown
     
     @property
     def spouse_families(self):

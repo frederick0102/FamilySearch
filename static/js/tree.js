@@ -272,6 +272,9 @@ function renderTree() {
     });
     
     // Házassági vonalak rajzolása
+    // A vonalak a kártya szélétől kis távolságra kezdődnek, hogy ne látszódjanak át a transzparens kártyán
+    const marriageLineGap = 5; // Kis rés a kártya széle és a vonal között
+    
     g.append('g')
         .attr('class', 'marriage-links')
         .selectAll('line')
@@ -281,19 +284,33 @@ function renderTree() {
         .attr('class', 'tree-link marriage')
         .attr('x1', d => {
             const source = positionedNodes.find(n => n.id === d.source);
-            return source ? source.x + cardWidth/2 : 0;
+            const target = positionedNodes.find(n => n.id === d.target);
+            if (!source || !target) return 0;
+            // Mindig a bal oldali kártya jobb szélétől indul
+            const leftNode = source.x < target.x ? source : target;
+            return leftNode.x + cardWidth/2 + marriageLineGap;
         })
         .attr('y1', d => {
             const source = positionedNodes.find(n => n.id === d.source);
-            return source ? source.y : 0;
+            const target = positionedNodes.find(n => n.id === d.target);
+            if (!source || !target) return 0;
+            const leftNode = source.x < target.x ? source : target;
+            return leftNode.y;
         })
         .attr('x2', d => {
+            const source = positionedNodes.find(n => n.id === d.source);
             const target = positionedNodes.find(n => n.id === d.target);
-            return target ? target.x - cardWidth/2 : 0;
+            if (!source || !target) return 0;
+            // Mindig a jobb oldali kártya bal széléig megy
+            const rightNode = source.x > target.x ? source : target;
+            return rightNode.x - cardWidth/2 - marriageLineGap;
         })
         .attr('y2', d => {
+            const source = positionedNodes.find(n => n.id === d.source);
             const target = positionedNodes.find(n => n.id === d.target);
-            return target ? target.y : 0;
+            if (!source || !target) return 0;
+            const rightNode = source.x > target.x ? source : target;
+            return rightNode.y;
         })
         .style('stroke', settings.line_color || '#666')
         .style('stroke-width', settings.line_width || 2);
