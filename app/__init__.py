@@ -20,8 +20,23 @@ def create_app():
     backup_dir = os.path.join(data_dir, 'backups')
     os.makedirs(backup_dir, exist_ok=True)
     
+    # Titkos kulcs: fájlból vagy környezeti változóból, egyébként generálás
+    secret_key_file = os.path.join(data_dir, '.secret_key')
+    secret_key = os.environ.get('SECRET_KEY')
+    if not secret_key:
+        if os.path.exists(secret_key_file):
+            with open(secret_key_file, 'r') as f:
+                secret_key = f.read().strip()
+        else:
+            # Generálás és mentés (egyszer, első indításkor)
+            import secrets
+            secret_key = secrets.token_hex(32)
+            with open(secret_key_file, 'w') as f:
+                f.write(secret_key)
+            os.chmod(secret_key_file, 0o600)  # Csak owner olvashatja
+    
     # Konfiguráció
-    app.config['SECRET_KEY'] = os.environ.get('SECRET_KEY', 'családfa-secret-key-2024-secure')
+    app.config['SECRET_KEY'] = secret_key
     app.config['SQLALCHEMY_DATABASE_URI'] = 'sqlite:///' + os.path.join(data_dir, 'familytree.db')
     app.config['SQLALCHEMY_TRACK_MODIFICATIONS'] = False
     app.config['UPLOAD_FOLDER'] = os.path.join(base_dir, '..', 'static', 'uploads')

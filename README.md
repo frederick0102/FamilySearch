@@ -141,6 +141,7 @@ After=network.target
 User=pi
 WorkingDirectory=/home/pi/familysearch
 Environment="PATH=/home/pi/familysearch/venv/bin"
+Environment="FLASK_DEBUG=false"
 ExecStart=/home/pi/familysearch/venv/bin/python run.py
 Restart=always
 RestartSec=10

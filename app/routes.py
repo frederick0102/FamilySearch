@@ -162,6 +162,7 @@ def get_persons():
 
 
 @api_bp.route('/persons/<int:person_id>', methods=['GET'])
+@api_login_required
 def get_person(person_id):
     """Egy személy lekérdezése"""
     person = Person.query.filter(not_deleted_filter(Person, 'person'), Person.id == person_id).first_or_404()
@@ -169,6 +170,7 @@ def get_person(person_id):
 
 
 @api_bp.route('/persons', methods=['POST'])
+@api_login_required
 def create_person():
     """Új személy létrehozása
     
@@ -223,6 +225,7 @@ def create_person():
 
 
 @api_bp.route('/persons/<int:person_id>', methods=['PUT'])
+@api_login_required
 def update_person(person_id):
     """Személy frissítése
     
@@ -258,6 +261,7 @@ def update_person(person_id):
 
 
 @api_bp.route('/persons/<int:person_id>', methods=['DELETE'])
+@api_login_required
 def delete_person(person_id):
     """Személy törlése"""
     person = Person.query.get_or_404(person_id)
@@ -267,6 +271,7 @@ def delete_person(person_id):
 
 
 @api_bp.route('/persons/<int:person_id>/photo', methods=['POST'])
+@api_login_required
 def upload_photo(person_id):
     """Profilkép feltöltése"""
     person = Person.query.get_or_404(person_id)
@@ -297,6 +302,7 @@ def upload_photo(person_id):
 
 @api_bp.route('/marriages', methods=['GET'])
 @api_bp.route('/families', methods=['GET'])
+@api_login_required
 def get_marriages():
     """Összes család/házasság lekérdezése"""
     marriages = Marriage.query.filter(not_deleted_filter(Marriage, 'marriage')).all()
@@ -305,6 +311,7 @@ def get_marriages():
 
 @api_bp.route('/families/<int:family_id>', methods=['GET'])
 @api_bp.route('/marriages/<int:family_id>', methods=['GET'])
+@api_login_required
 def get_family(family_id):
     """Egy család/házasság lekérdezése részletekkel"""
     family = Marriage.query.filter(
@@ -326,6 +333,7 @@ def get_family(family_id):
 
 @api_bp.route('/marriages', methods=['POST'])
 @api_bp.route('/families', methods=['POST'])
+@api_login_required
 def create_marriage():
     """Új család/házasság létrehozása
     
@@ -395,6 +403,7 @@ def create_marriage():
 
 @api_bp.route('/marriages/<int:marriage_id>', methods=['PUT'])
 @api_bp.route('/families/<int:marriage_id>', methods=['PUT'])
+@api_login_required
 def update_marriage(marriage_id):
     """Család/házasság frissítése"""
     marriage = Marriage.query.filter(not_deleted_filter(Marriage, 'marriage'), Marriage.id == marriage_id).first_or_404()
@@ -448,6 +457,7 @@ def update_marriage(marriage_id):
 
 @api_bp.route('/marriages/<int:marriage_id>', methods=['DELETE'])
 @api_bp.route('/families/<int:marriage_id>', methods=['DELETE'])
+@api_login_required
 def delete_marriage(marriage_id):
     """Család/házasság törlése"""
     family = Marriage.query.get_or_404(marriage_id)
@@ -466,6 +476,7 @@ def delete_marriage(marriage_id):
 # Gyerekek hozzárendelése családhoz (GEDCOM-stílus)
 
 @api_bp.route('/families/<int:family_id>/children', methods=['GET'])
+@api_login_required
 def get_family_children(family_id):
     """Család gyerekeinek lekérdezése"""
     family = Marriage.query.filter(
@@ -488,6 +499,7 @@ def get_family_children(family_id):
 
 
 @api_bp.route('/families/<int:family_id>/children', methods=['POST'])
+@api_login_required
 def add_child_to_family(family_id):
     """Gyerek hozzáadása családhoz
     
@@ -533,6 +545,7 @@ def add_child_to_family(family_id):
 
 
 @api_bp.route('/families/<int:family_id>/children/<int:person_id>', methods=['DELETE'])
+@api_login_required
 def remove_child_from_family(family_id, person_id):
     """Gyerek eltávolítása családból (nem törli a személyt!)"""
     person = Person.query.filter(
@@ -552,6 +565,7 @@ def remove_child_from_family(family_id, person_id):
 # ==================== ESEMÉNYEK API ====================
 
 @api_bp.route('/events', methods=['GET'])
+@api_login_required
 def get_events():
     """Összes esemény lekérdezése"""
     person_id = request.args.get('person_id')
@@ -563,6 +577,7 @@ def get_events():
 
 
 @api_bp.route('/events', methods=['POST'])
+@api_login_required
 def create_event():
     """Új esemény létrehozása"""
     data = request.get_json()
@@ -584,6 +599,7 @@ def create_event():
 
 
 @api_bp.route('/events/<int:event_id>', methods=['DELETE'])
+@api_login_required
 def delete_event(event_id):
     """Esemény törlése"""
     Event.query.get_or_404(event_id)
@@ -595,6 +611,7 @@ def delete_event(event_id):
 # ==================== DOKUMENTUMOK API ====================
 
 @api_bp.route('/documents', methods=['GET'])
+@api_login_required
 def get_documents():
     """Összes dokumentum lekérdezése"""
     person_id = request.args.get('person_id')
@@ -606,6 +623,7 @@ def get_documents():
 
 
 @api_bp.route('/documents', methods=['POST'])
+@api_login_required
 def upload_document():
     """Dokumentum feltöltése"""
     if 'file' not in request.files:
@@ -642,6 +660,7 @@ def upload_document():
 
 
 @api_bp.route('/documents/<int:document_id>', methods=['DELETE'])
+@api_login_required
 def delete_document(document_id):
     """Dokumentum törlése"""
     Document.query.get_or_404(document_id)
@@ -653,6 +672,7 @@ def delete_document(document_id):
 # ==================== CSALÁDFA API ====================
 
 @api_bp.route('/tree/data', methods=['GET'])
+@api_login_required
 def get_tree_data():
     """Családfa adatok lekérdezése vizualizációhoz
     
@@ -723,6 +743,7 @@ def get_tree_data():
 
 
 @api_bp.route('/tree/ancestors/<int:person_id>', methods=['GET'])
+@api_login_required
 def get_ancestors(person_id):
     """Ősök lekérdezése (felmenők)"""
     def get_ancestors_recursive(person, depth=0, max_depth=10):
@@ -744,6 +765,7 @@ def get_ancestors(person_id):
 
 
 @api_bp.route('/tree/descendants/<int:person_id>', methods=['GET'])
+@api_login_required
 def get_descendants(person_id):
     """Leszármazottak lekérdezése"""
     def get_descendants_recursive(person, depth=0, max_depth=10):
@@ -766,6 +788,7 @@ def get_descendants(person_id):
 # ==================== BEÁLLÍTÁSOK API ====================
 
 @api_bp.route('/settings', methods=['GET'])
+@api_login_required
 def get_settings():
     """Beállítások lekérdezése"""
     settings = TreeSettings.query.first()
@@ -778,6 +801,7 @@ def get_settings():
 
 
 @api_bp.route('/settings', methods=['PUT'])
+@api_login_required
 def update_settings():
     """Beállítások frissítése"""
     settings = TreeSettings.query.first()
@@ -802,6 +826,7 @@ def update_settings():
 # ==================== EXPORT API ====================
 
 @api_bp.route('/export/gedcom', methods=['GET'])
+@api_login_required
 def export_gedcom():
     """Export GEDCOM formátumban (genealógiai standard)"""
     persons = Person.query.filter(not_deleted_filter(Person, 'person')).all()
@@ -863,6 +888,7 @@ def export_gedcom():
 
 
 @api_bp.route('/export/json', methods=['GET'])
+@api_login_required
 def export_json():
     """Export JSON formátumban"""
     persons = Person.query.filter(not_deleted_filter(Person, 'person')).all()
@@ -880,6 +906,7 @@ def export_json():
 
 
 @api_bp.route('/import/json', methods=['POST'])
+@api_login_required
 def import_json():
     """Import JSON formátumból - teljes adatbázis csere"""
     import shutil
@@ -1055,6 +1082,7 @@ def import_json():
 # ==================== KERESÉS API ====================
 
 @api_bp.route('/search', methods=['GET'])
+@api_login_required
 def search():
     """Keresés személyek között"""
     query = request.args.get('q', '')
@@ -1075,6 +1103,7 @@ def search():
 # ==================== STATISZTIKÁK API ====================
 
 @api_bp.route('/stats', methods=['GET'])
+@api_login_required
 def get_stats():
     """Statisztikák lekérdezése"""
     active_persons = Person.query.filter(not_deleted_filter(Person, 'person'))
@@ -1130,6 +1159,7 @@ def _entity_to_dict(entity_type, entity_id):
 
 
 @api_bp.route('/trash', methods=['GET'])
+@api_login_required
 def list_trash():
     """Lomtár tartalmának listázása"""
     deleted = DeletedRecord.query.order_by(DeletedRecord.deleted_at.desc()).all()
@@ -1144,6 +1174,7 @@ def list_trash():
 
 
 @api_bp.route('/trash/restore', methods=['POST'])
+@api_login_required
 def restore_from_trash():
     """Entitás visszaállítása a lomtárból"""
     data = request.get_json() or {}
@@ -1164,6 +1195,7 @@ def restore_from_trash():
 
 
 @api_bp.route('/trash/delete', methods=['POST'])
+@api_login_required
 def delete_permanently():
     """Entitás végleges törlése az adatbázisból"""
     data = request.get_json() or {}
