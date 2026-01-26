@@ -66,3 +66,6 @@ logs/
 *.tmp
 *.temp
 /tmp/
+
+familytree.db
+familysearch.service
