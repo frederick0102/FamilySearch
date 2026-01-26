@@ -135,7 +135,10 @@ function initNavigation() {
                 if (viewId === 'trash') await loadTrash();
                 if (viewId === 'stats') await loadStats();
                 if (viewId === 'tree') updateTree();
-                if (viewId === 'settings') await loadSettings();
+                if (viewId === 'settings') {
+                    await loadSettings();
+                    await loadBackups();
+                }
             } catch (error) {
                 console.error('Nézet betöltési hiba:', error);
             }
@@ -1896,7 +1899,7 @@ document.addEventListener('DOMContentLoaded', async () => {
     
     // Backup kezelés
     document.getElementById('create-backup-btn').addEventListener('click', createBackup);
-    loadBackups();
+    // loadBackups() - ne hívjuk itt, a settings nézet aktiválásakor hívódik
     
     // Export/Import - KRITIKUS, mindig működjön!
     document.getElementById('export-json').addEventListener('click', exportJSON);
