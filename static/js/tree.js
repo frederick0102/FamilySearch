@@ -783,9 +783,48 @@ function buildGenerationLayout(sizes) {
     const directLineage = new Set(); // egyenesági ősök és leszármazottak
     const relationshipLabels = new Map(); // person_id -> rokonsági megnevezés
     
+    // Segédfüggvény: közös ős megtalálása és a távolság meghatározása
+    const findCommonAncestorDistance = (personId) => {
+        // Megkeressük a gyökérszemélytől való legközelebbi közös őst
+        // és visszaadjuk, hány generációra van a közös ős a gyökértől
+        
+        // Gyűjtsük össze a gyökér őseit szintenként
+        const rootAncestors = new Map(); // ancestorId -> distance from root
+        const collectAncestors = (id, distance, ancestors) => {
+            ancestors.set(id, distance);
+            const parents = parentsOf.get(id) || [];
+            parents.forEach(pid => {
+                if (!ancestors.has(pid)) {
+                    collectAncestors(pid, distance + 1, ancestors);
+                }
+            });
+        };
+        collectAncestors(rootActualId, 0, rootAncestors);
+        
+        // Keressük meg a person őseit és a közös őst
+        const personAncestors = new Map();
+        collectAncestors(personId, 0, personAncestors);
+        
+        // Találjuk meg a legközelebbi közös őst
+        let minCommonDistance = Infinity;
+        personAncestors.forEach((personDist, ancestorId) => {
+            if (rootAncestors.has(ancestorId)) {
+                const rootDist = rootAncestors.get(ancestorId);
+                // Az unokatestvér fokozata = közös ős távolsága - 1
+                // pl. nagyszülő közös ős (2 gen) -> 1. fokú unokatestvér
+                if (rootDist < minCommonDistance) {
+                    minCommonDistance = rootDist;
+                }
+            }
+        });
+        
+        return minCommonDistance === Infinity ? 0 : minCommonDistance;
+    };
+    
     // Segédfüggvény: magyar rokonsági megnevezések
-    const getRelationshipLabel = (genDiff, isDirectLine, gender, isSibling = false, siblingLineGenDiff = 0) => {
-        if (genDiff === 0 && !isSibling) return 'Én';
+    const getRelationshipLabel = (genDiff, isDirectLine, gender, isSibling = false, siblingLineGenDiff = 0, cousinDegree = 0) => {
+        // FONTOS: Az "Én" címke csak a gyökérszemélynél jelenjen meg, 
+        // nem itt adjuk hozzá, hanem külön a findDirectLineage-ben
         
         const isMale = gender === 'male';
         
@@ -829,7 +868,21 @@ function buildGenerationLayout(sizes) {
             return `Oldalági leszármazott (${genDiff}. gen)`;
         }
         
-        // Ugyanaz a generáció (unokatestvérek)
+        // Ugyanaz a generáció (unokatestvérek) - fokozat megkülönböztetése
+        // cousinDegree: 2 = nagyszülő közös ős (1. fokú), 3 = dédszülő közös ős (2. fokú), stb.
+        if (cousinDegree >= 2) {
+            const degree = cousinDegree - 1; // 1. fokú, 2. fokú, stb.
+            if (degree === 1) {
+                return isMale ? 'Unokatestvér (fiú)' : 'Unokatestvér (lány)';
+            } else if (degree === 2) {
+                return isMale ? 'Másodunokatestvér (fiú)' : 'Másodunokatestvér (lány)';
+            } else if (degree === 3) {
+                return isMale ? 'Harmadunokatestvér (fiú)' : 'Harmadunokatestvér (lány)';
+            } else {
+                return `${degree}. unokatestvér (${isMale ? 'fiú' : 'lány'})`;
+            }
+        }
+        
         return isMale ? 'Unokatestvér (fiú)' : 'Unokatestvér (lány)';
     };
     
@@ -934,7 +987,14 @@ function buildGenerationLayout(sizes) {
                 const nodeGen = generations.get(node.id) || 0;
                 const rootNormalizedGen = generations.get(rootActualId) || 0;
                 const genDiff = nodeGen - rootNormalizedGen;
-                relationshipLabels.set(node.id, getRelationshipLabel(genDiff, false, node.gender));
+                
+                // Unokatestvérek esetén (genDiff === 0) meghatározzuk a fokozatot
+                let cousinDegree = 0;
+                if (genDiff === 0) {
+                    cousinDegree = findCommonAncestorDistance(node.id);
+                }
+                
+                relationshipLabels.set(node.id, getRelationshipLabel(genDiff, false, node.gender, false, 0, cousinDegree));
             }
         });
     };
@@ -1860,7 +1920,8 @@ async function saveNewRelative(personId, relationType) {
         closeAddRelativeModal();
         
         // Adatok frissítése
-        await loadPersons();
+        persons = await API.get('/persons');
+        updateRootPersonSelector();
         await updateTree();
         
     } catch (error) {
@@ -1912,10 +1973,37 @@ async function createParentRelation(childId, parentId, parentGender) {
 
 async function createPartnerRelation(personId, partnerId, status) {
     // Házasság/kapcsolat létrehozása
+    // A status értéket átalakítjuk a megfelelő relationship_type-ra
+    let relationshipType = 'marriage';
+    let marriageStatus = 'active';
+    
+    switch (status) {
+        case 'married':
+            relationshipType = 'marriage';
+            marriageStatus = 'active';
+            break;
+        case 'engaged':
+            relationshipType = 'engagement';
+            marriageStatus = 'active';
+            break;
+        case 'partner':
+            relationshipType = 'partner';
+            marriageStatus = 'active';
+            break;
+        case 'divorced':
+            relationshipType = 'marriage';
+            marriageStatus = 'divorced';
+            break;
+        default:
+            relationshipType = 'marriage';
+            marriageStatus = 'active';
+    }
+    
     const marriageData = {
         person1_id: personId,
         person2_id: partnerId,
-        status: status
+        relationship_type: relationshipType,
+        status: marriageStatus
     };
     
     await API.post('/marriages', marriageData);

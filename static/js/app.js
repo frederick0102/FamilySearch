@@ -491,6 +491,12 @@ async function openPersonModal(personId = null) {
         title.textContent = 'Személy szerkesztése';
         deleteBtn.style.display = 'block';
         
+        // Partner szekció elrejtése szerkesztésnél (csak új személynél látható)
+        const partnerSection = document.querySelector('.partner-section');
+        if (partnerSection) {
+            partnerSection.style.display = 'none';
+        }
+        
         try {
             const person = await API.get(`/persons/${personId}`);
             await fillPersonForm(person);
@@ -506,6 +512,18 @@ async function openPersonModal(personId = null) {
         document.getElementById('marriages-list').innerHTML = '';
         document.getElementById('events-list').innerHTML = '';
         document.getElementById('documents-list').innerHTML = '';
+        
+        // Partner szekció megjelenítése új személynél
+        const partnerSection = document.querySelector('.partner-section');
+        if (partnerSection) {
+            partnerSection.style.display = 'block';
+        }
+        
+        // Partner választó ürítése
+        const partnerSelector = document.getElementById('initial_partner_id');
+        if (partnerSelector) {
+            partnerSelector.value = '';
+        }
         
         // FONTOS: Flatpickr értékek explicit törlése új személy esetén
         // A form.reset() nem törli a flatpickr értékeket!
@@ -1548,8 +1566,7 @@ function updateRootPersonSelector() {
         return '';
     };
     
-    selector.innerHTML = '<option value="">-- Gyökér személy --</option>' +
-        persons.map(p => `<option value="${p.id}">${p.full_name}${formatBirthYear(p)}</option>`).join('');
+    selector.innerHTML = persons.map(p => `<option value="${p.id}">${p.full_name}${formatBirthYear(p)}</option>`).join('');
     
     // Beállítások oldali gyökér selector frissítése is
     updateDefaultRootPersonSelector();
