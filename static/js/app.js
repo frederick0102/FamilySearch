@@ -1250,6 +1250,7 @@ function applySettings() {
         setVal('setting-male-color', settings.male_color || '#4A90D9');
         setVal('setting-female-color', settings.female_color || '#D94A8C');
         setVal('setting-unknown-color', settings.unknown_color || '#808080');
+        setVal('setting-direct-lineage-color', settings.direct_lineage_color || '#E8B84A');
         setVal('setting-line-color', settings.line_color || '#666666');
         setVal('setting-bg-color', settings.background_color || '#F5F5F5');
         setVal('setting-deceased-opacity', settings.deceased_opacity || 0.7);
@@ -1281,6 +1282,7 @@ async function saveSettings() {
         male_color: document.getElementById('setting-male-color').value,
         female_color: document.getElementById('setting-female-color').value,
         unknown_color: document.getElementById('setting-unknown-color').value,
+        direct_lineage_color: document.getElementById('setting-direct-lineage-color').value,
         line_color: document.getElementById('setting-line-color').value,
         background_color: document.getElementById('setting-bg-color').value,
         deceased_opacity: parseFloat(document.getElementById('setting-deceased-opacity').value),

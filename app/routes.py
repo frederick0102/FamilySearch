@@ -811,7 +811,7 @@ def update_settings():
     
     data = request.get_json()
     
-    for field in ['name', 'male_color', 'female_color', 'unknown_color', 'deceased_opacity',
+    for field in ['name', 'male_color', 'female_color', 'unknown_color', 'direct_lineage_color', 'deceased_opacity',
                   'line_color', 'line_width', 'marriage_line_style', 'card_width', 'card_height',
                   'card_border_radius', 'show_photos', 'show_dates', 'show_places', 'show_occupation',
                   'background_color', 'background_image', 'font_family', 'font_size', 'default_root_person_id']:

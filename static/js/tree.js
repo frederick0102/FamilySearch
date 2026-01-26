@@ -83,6 +83,9 @@ async function updateTree() {
 
 // ==================== FA RAJZOLÁS ====================
 function renderTree() {
+    // Ha nincs g elem, ne csináljunk semmit
+    if (!g) return;
+    
     // Törlés
     g.selectAll('*').remove();
     
@@ -92,8 +95,13 @@ function renderTree() {
     }
     
     const container = document.getElementById('tree-container');
+    if (!container) return;
+    
     const width = container.clientWidth;
     const height = container.clientHeight;
+    
+    // Ha a container nem látható (0 méret), ne rajzoljunk
+    if (width <= 0 || height <= 0) return;
     
     // Beállítások
     const cardWidth = settings.card_width || 200;
@@ -359,9 +367,9 @@ function renderTree() {
         .attr('ry', settings.card_border_radius || 8)
         .style('fill', d => getNodeColor(d))
         .style('stroke', d => {
-            // Egyenesági személyek arany kerettel
+            // Egyenesági személyek kiemelése a beállított színnel
             if (d.isDirectLine) {
-                return '#FFD700'; // Arany szín
+                return settings.direct_lineage_color || '#E8B84A';
             }
             return d3.color(getNodeColor(d)).darker(0.3);
         })
@@ -376,7 +384,7 @@ function renderTree() {
         .style('font-family', settings.font_family || 'Arial, sans-serif')
         .style('font-size', '9px')
         .style('font-weight', '500')
-        .style('fill', d => d.isDirectLine ? '#FFD700' : 'rgba(255,255,255,0.7)')
+        .style('fill', d => d.isDirectLine ? (settings.direct_lineage_color || '#E8B84A') : 'rgba(255,255,255,0.7)')
         .text(d => d.relationLabel || '');
     
     // Profilkép (opcionális)
@@ -1598,10 +1606,18 @@ function hideTooltip() {
 // ==================== FA KÖZÉPRE IGAZÍTÁS ====================
 function centerTree() {
     const container = document.getElementById('tree-container');
-    const bounds = g.node().getBBox();
+    if (!container || !g || !g.node()) return;
     
     const width = container.clientWidth;
     const height = container.clientHeight;
+    
+    // Ha a container nem látható (0 méret), ne csináljunk semmit
+    if (width <= 0 || height <= 0) return;
+    
+    const bounds = g.node().getBBox();
+    
+    // Ha nincs tartalom a fában
+    if (bounds.width <= 0 || bounds.height <= 0) return;
     
     const scale = Math.min(
         width / (bounds.width + 100),
@@ -1609,8 +1625,14 @@ function centerTree() {
         1
     );
     
+    // NaN ellenőrzés
+    if (isNaN(scale) || scale <= 0) return;
+    
     const translateX = (width - bounds.width * scale) / 2 - bounds.x * scale;
     const translateY = (height - bounds.height * scale) / 2 - bounds.y * scale;
+    
+    // NaN ellenőrzés
+    if (isNaN(translateX) || isNaN(translateY)) return;
     
     svg.transition()
         .duration(500)
@@ -1623,8 +1645,13 @@ function centerTree() {
 // ==================== ÜRES ÁLLAPOT ====================
 function renderEmptyState() {
     const container = document.getElementById('tree-container');
+    if (!container) return;
+    
     const width = container.clientWidth;
     const height = container.clientHeight;
+    
+    // Ha a container nem látható, ne rajzoljunk
+    if (width <= 0 || height <= 0) return;
     
     g.append('text')
         .attr('x', width / 2)

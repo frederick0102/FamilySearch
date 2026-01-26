@@ -405,6 +405,7 @@ class TreeSettings(db.Model):
     male_color = db.Column(db.String(20), default='#4A90D9')
     female_color = db.Column(db.String(20), default='#D94A8C')
     unknown_color = db.Column(db.String(20), default='#808080')
+    direct_lineage_color = db.Column(db.String(20), default='#E8B84A')  # Meleg arany - jól látható világos és sötét háttéren
     deceased_opacity = db.Column(db.Float, default=0.7)
     
     # Kapcsolat vonalak
@@ -439,6 +440,7 @@ class TreeSettings(db.Model):
             'male_color': self.male_color,
             'female_color': self.female_color,
             'unknown_color': self.unknown_color,
+            'direct_lineage_color': self.direct_lineage_color,
             'deceased_opacity': self.deceased_opacity,
             'line_color': self.line_color,
             'line_width': self.line_width,
