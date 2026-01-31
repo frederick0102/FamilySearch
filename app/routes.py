@@ -1,7 +1,7 @@
 from flask import Blueprint, render_template, request, jsonify, current_app, redirect, url_for, session
 from werkzeug.utils import secure_filename
 from app import db
-from app.models import Person, Marriage, Event, Document, TreeSettings, DeletedRecord, AppSettings, BackupLog
+from app.models import Person, Marriage, Event, Document, TreeSettings, DeletedRecord, AppSettings, BackupLog, NodePosition
 from app.auth import (
     login_required, api_login_required, is_authenticated, 
     login_user, logout_user, verify_password, change_password
@@ -1226,3 +1226,134 @@ def delete_permanently():
     db.session.commit()
 
     return jsonify({'status': 'deleted', 'entity_type': entity_type, 'entity_id': entity_id})
+
+
+# ==================== NODE POZÍCIÓK (DRAG & DROP) ====================
+
+@api_bp.route('/node-positions/<int:root_person_id>', methods=['GET'])
+@api_login_required
+def get_node_positions(root_person_id):
+    """Elmentett pozíciók lekérése egy adott root személyhez"""
+    positions = NodePosition.query.filter_by(root_person_id=root_person_id).all()
+    return jsonify({
+        'root_person_id': root_person_id,
+        'positions': {p.person_id: {'x': p.x, 'y': p.y} for p in positions}
+    })
+
+
+@api_bp.route('/node-position', methods=['POST'])
+@api_login_required
+def save_node_position():
+    """Egy csomópont pozíciójának mentése (drag után)"""
+    data = request.get_json()
+    
+    person_id = data.get('person_id')
+    root_person_id = data.get('root_person_id')
+    x = data.get('x')
+    y = data.get('y')
+    
+    if not all([person_id, root_person_id, x is not None, y is not None]):
+        return jsonify({'error': 'Hiányzó paraméterek'}), 400
+    
+    # Meglévő pozíció frissítése vagy új létrehozása
+    position = NodePosition.query.filter_by(
+        person_id=person_id,
+        root_person_id=root_person_id
+    ).first()
+    
+    if position:
+        position.x = x
+        position.y = y
+    else:
+        position = NodePosition(
+            person_id=person_id,
+            root_person_id=root_person_id,
+            x=x,
+            y=y
+        )
+        db.session.add(position)
+    
+    db.session.commit()
+    
+    return jsonify({
+        'status': 'saved',
+        'position': position.to_dict()
+    })
+
+
+@api_bp.route('/node-positions/batch', methods=['POST'])
+@api_login_required
+def save_batch_positions():
+    """Több pozíció mentése egyszerre"""
+    data = request.get_json()
+    
+    root_person_id = data.get('root_person_id')
+    positions = data.get('positions', {})
+    
+    if not root_person_id:
+        return jsonify({'error': 'Hiányzó root_person_id'}), 400
+    
+    saved_count = 0
+    for person_id_str, coords in positions.items():
+        person_id = int(person_id_str)
+        x = coords.get('x')
+        y = coords.get('y')
+        
+        if x is None or y is None:
+            continue
+        
+        position = NodePosition.query.filter_by(
+            person_id=person_id,
+            root_person_id=root_person_id
+        ).first()
+        
+        if position:
+            position.x = x
+            position.y = y
+        else:
+            position = NodePosition(
+                person_id=person_id,
+                root_person_id=root_person_id,
+                x=x,
+                y=y
+            )
+            db.session.add(position)
+        
+        saved_count += 1
+    
+    db.session.commit()
+    
+    return jsonify({
+        'status': 'saved',
+        'count': saved_count
+    })
+
+
+@api_bp.route('/node-position/<int:person_id>/<int:root_person_id>', methods=['DELETE'])
+@api_login_required
+def delete_node_position(person_id, root_person_id):
+    """Egy pozíció törlése (visszaállítás automatikus elhelyezésre)"""
+    position = NodePosition.query.filter_by(
+        person_id=person_id,
+        root_person_id=root_person_id
+    ).first()
+    
+    if position:
+        db.session.delete(position)
+        db.session.commit()
+        return jsonify({'status': 'deleted'})
+    
+    return jsonify({'status': 'not_found'}), 404
+
+
+@api_bp.route('/node-positions/<int:root_person_id>/reset', methods=['DELETE'])
+@api_login_required
+def reset_all_positions(root_person_id):
+    """Összes pozíció törlése egy root személynél (teljes visszaállítás)"""
+    deleted = NodePosition.query.filter_by(root_person_id=root_person_id).delete()
+    db.session.commit()
+    
+    return jsonify({
+        'status': 'reset',
+        'deleted_count': deleted
+    })

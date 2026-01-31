@@ -5,6 +5,11 @@ let treeData = { nodes: [], links: [] };
 let currentLayout = 'vertical';
 let rootPersonId = null;
 
+// Elmentett egyedi pozíciók (drag & drop után)
+let savedPositions = {}; // { personId: { x, y } }
+let isDragging = false;
+let positionedNodesCache = []; // Aktuális pozícionált node-ok cache-elése újrarajzoláshoz
+
 // ==================== INICIALIZÁLÁS ====================
 function initTree() {
     const container = document.getElementById('tree-container');
@@ -50,6 +55,16 @@ function initTree() {
     
     document.getElementById('center-tree').addEventListener('click', centerTree);
     
+    // Pozíciók visszaállítása gomb
+    const resetPositionsBtn = document.getElementById('reset-positions');
+    if (resetPositionsBtn) {
+        resetPositionsBtn.addEventListener('click', async () => {
+            if (confirm('Biztosan visszaállítod az összes pozíciót az automatikus elrendezésre?')) {
+                await resetAllPositions();
+            }
+        });
+    }
+    
     document.getElementById('tree-layout').addEventListener('change', (e) => {
         currentLayout = e.target.value;
         updateTree();
@@ -75,9 +90,60 @@ function initTree() {
 async function updateTree() {
     try {
         treeData = await API.get('/tree/data');
+        
+        // Elmentett pozíciók betöltése ha van root person
+        if (rootPersonId) {
+            await loadSavedPositions(rootPersonId);
+        } else {
+            savedPositions = {};
+        }
+        
         renderTree();
     } catch (error) {
         console.error('Fa adatok betöltési hiba:', error);
+    }
+}
+
+// ==================== POZÍCIÓK MENTÉSE/BETÖLTÉSE ====================
+async function loadSavedPositions(rootId) {
+    try {
+        const response = await API.get(`/node-positions/${rootId}`);
+        savedPositions = response.positions || {};
+        console.log(`Betöltve ${Object.keys(savedPositions).length} elmentett pozíció`);
+    } catch (error) {
+        console.warn('Pozíciók betöltési hiba (lehet, hogy még nincs):', error);
+        savedPositions = {};
+    }
+}
+
+async function saveNodePosition(personId, x, y) {
+    if (!rootPersonId) return;
+    
+    try {
+        await API.post('/node-position', {
+            person_id: personId,
+            root_person_id: rootPersonId,
+            x: x,
+            y: y
+        });
+        // Lokálisan is frissítjük
+        savedPositions[personId] = { x, y };
+        console.log(`Pozíció mentve: személy ${personId} -> (${x}, ${y})`);
+    } catch (error) {
+        console.error('Pozíció mentési hiba:', error);
+    }
+}
+
+async function resetAllPositions() {
+    if (!rootPersonId) return;
+    
+    try {
+        await API.delete(`/node-positions/${rootPersonId}/reset`);
+        savedPositions = {};
+        console.log('Összes pozíció visszaállítva');
+        updateTree(); // Újrarajzolás automatikus elhelyezéssel
+    } catch (error) {
+        console.error('Pozíciók visszaállítási hiba:', error);
     }
 }
 
@@ -207,11 +273,22 @@ function renderTree() {
         // Gyerekek teteje - kis offset-tel feljebb
         const childTopY = Math.min(...childPositions.map(c => c.y)) - cardHeight / 2;
         
-        // Vízszintes vonal Y pozíciója - a gyerekek kártyái FÖLÖTT 20px-el
-        const childrenLineY = childTopY - 20;
+        // === ROUTING: Minden családnak SAJÁT vízszintes vonal magassága ===
+        // A familyId alapján kis offset-et adunk, hogy a vonalak ne fedjenek át
+        // Alap pozíció: 20px a gyerekek kártyái fölött
+        const baseChildrenLineY = childTopY - 20;
+        // Minden családnak saját offset a familyId hash alapján
+        const familyOffset = (familyId % 5) * 8; // 0, 8, 16, 24, 32 px offset
+        const childrenLineY = baseChildrenLineY - familyOffset;
         
-        // Középső Y (ahol a szülőktől jövő vonalak találkoznak) - a két szint között félúton
-        const junctionY = (parentBottomY + childrenLineY) / 2;
+        // ROUTING: Minden családnak SAJÁT junctionY magassága
+        // A szülők középpontjának X pozíciója alapján kis offset-et adunk
+        // Így a vonalak nem futnak egymáson át
+        const baseJunctionY = (parentBottomY + childrenLineY) / 2;
+        // A családok X pozíciója alapján kis vertikális eltolás (max ±30px)
+        const xNormalized = parentCenterX / 1000; // Normalizálás
+        const junctionOffset = xNormalized * 15; // ±15px offset
+        const junctionY = baseJunctionY + junctionOffset;
         
         const color = settings.line_color || '#666';
         const width = settings.line_width || 2;
@@ -239,16 +316,18 @@ function renderTree() {
                 .style('fill', 'none');
         }
         
-        // Gyerekek X pozícióinak szélső értékei
+        // Gyerekek X pozícióinak szélső értékei és középpontja
         const childLeftX = Math.min(...childPositions.map(c => c.x));
         const childRightX = Math.max(...childPositions.map(c => c.x));
+        const childCenterX = childPositions.reduce((sum, c) => sum + c.x, 0) / childPositions.length;
         
-        // A vízszintes vonal szélei: a szülők középpontja és a gyerekek X tartománya
-        // Ha az egyetlen gyerek nincs a szülők alatt, a vonalnak el kell érnie hozzá
-        const lineLeftX = Math.min(parentCenterX, childLeftX);
-        const lineRightX = Math.max(parentCenterX, childRightX);
+        // === ÚJ ROUTING LOGIKA ===
+        // A vonal NEM nyúlik át más családok területére!
+        // Ehelyett: szülők középpontjából lefelé, majd KÖZVETLENÜL a gyerekek középpontjához
+        // (nem a teljes gyerek-tartományra)
         
-        // A középpontból lefelé a gyerekek vízszintes vonalának szintjéig
+        // 1. Szülők középpontjából lefelé a junctionY-ig (már megrajzolva fent)
+        // 2. Szülők középpontjából lefelé a childrenLineY-ig
         linksGroup.append('path')
             .attr('class', 'tree-link junction-down')
             .attr('d', `M${parentCenterX},${junctionY} L${parentCenterX},${childrenLineY}`)
@@ -256,19 +335,28 @@ function renderTree() {
             .style('stroke-width', width)
             .style('fill', 'none');
         
-        // Vízszintes vonal a gyerekek szintjén
-        // MINDIG rajzoljuk, ha a szülők középpontja és a gyerekek X pozíciója eltér
-        // Ez biztosítja, hogy egyetlen gyerek is összekötve legyen
-        if (lineLeftX !== lineRightX) {
+        // 3. Vízszintes vonal a szülők középpontjától a gyerekek középpontjáig
+        //    (NEM a szélső gyerekekig - csak a középpontig!)
+        if (Math.abs(parentCenterX - childCenterX) > 1) {
             linksGroup.append('path')
-                .attr('class', 'tree-link children-horizontal')
-                .attr('d', `M${lineLeftX},${childrenLineY} L${lineRightX},${childrenLineY}`)
+                .attr('class', 'tree-link parent-to-child-center')
+                .attr('d', `M${parentCenterX},${childrenLineY} L${childCenterX},${childrenLineY}`)
                 .style('stroke', color)
                 .style('stroke-width', width)
                 .style('fill', 'none');
         }
         
-        // Minden gyerekhez függőleges vonal a vízszintes vonaltól a kártya tetejéig
+        // 4. Vízszintes vonal a gyerekek között (gyerekek X tartományán belül)
+        if (childPositions.length > 1) {
+            linksGroup.append('path')
+                .attr('class', 'tree-link children-horizontal')
+                .attr('d', `M${childLeftX},${childrenLineY} L${childRightX},${childrenLineY}`)
+                .style('stroke', color)
+                .style('stroke-width', width)
+                .style('fill', 'none');
+        }
+        
+        // 5. Minden gyerekhez függőleges vonal a vízszintes vonaltól a kártya tetejéig
         childPositions.forEach(child => {
             linksGroup.append('path')
                 .attr('class', 'tree-link child-vertical')
@@ -341,6 +429,198 @@ function renderTree() {
             .text(link.status === 'divorced' ? '💔' : '❤️');
     });
     
+    // Cache-eljük a pozícionált node-okat az újrarajzoláshoz
+    positionedNodesCache = positionedNodes;
+    
+    // Generációs szintek kiszámítása (egyedi Y értékek)
+    const generationLevels = [...new Set(positionedNodes.map(n => n.y))].sort((a, b) => a - b);
+    // Vertikális vonalak - egyedi X értékek (személyek pozíciói)
+    const verticalLevels = [...new Set(positionedNodes.map(n => n.x))].sort((a, b) => a - b);
+    const SNAP_THRESHOLD = 15; // Pixelek - ennyi közelségben snap-el
+    
+    // Segédvonalak csoportja
+    let guidesGroup = null;
+    let currentDraggedId = null;
+    
+    // Drag behavior létrehozása
+    const dragBehavior = d3.drag()
+        .on('start', function(event, d) {
+            isDragging = true;
+            currentDraggedId = d.id;
+            d3.select(this).raise().classed('dragging', true);
+            // Zoom kikapcsolása drag közben
+            svg.on('.zoom', null);
+            
+            // Segédvonalak csoport létrehozása
+            guidesGroup = g.append('g').attr('class', 'guides');
+            
+            // Összes generációs szint megjelenítése halványan (vízszintes vonalak)
+            generationLevels.forEach(levelY => {
+                if (Math.abs(levelY - d.y) > 5) { // Saját szintjét nem mutatjuk
+                    guidesGroup.append('line')
+                        .attr('class', 'guide-line guide-horizontal')
+                        .attr('x1', -5000)
+                        .attr('x2', 5000)
+                        .attr('y1', levelY)
+                        .attr('y2', levelY)
+                        .attr('data-level', levelY)
+                        .style('stroke', 'rgba(74, 144, 226, 0.3)')
+                        .style('stroke-width', 1)
+                        .style('stroke-dasharray', '5,5')
+                        .style('pointer-events', 'none');
+                }
+            });
+            
+            // Vertikális vonalak - más személyek X pozícióinál
+            verticalLevels.forEach(levelX => {
+                if (Math.abs(levelX - d.x) > 5) { // Saját pozícióját nem mutatjuk
+                    guidesGroup.append('line')
+                        .attr('class', 'guide-line guide-vertical')
+                        .attr('x1', levelX)
+                        .attr('x2', levelX)
+                        .attr('y1', -5000)
+                        .attr('y2', 5000)
+                        .attr('data-level', levelX)
+                        .style('stroke', 'rgba(226, 144, 74, 0.3)')  // Narancs szín
+                        .style('stroke-width', 1)
+                        .style('stroke-dasharray', '5,5')
+                        .style('pointer-events', 'none');
+                }
+            });
+        })
+        .on('drag', function(event, d) {
+            let newX = event.x;
+            let newY = event.y;
+            
+            // Snap logika - Y tengelyen (generációs szintek)
+            let snappedY = null;
+            for (const levelY of generationLevels) {
+                if (Math.abs(newY - levelY) < SNAP_THRESHOLD) {
+                    snappedY = levelY;
+                    break;
+                }
+            }
+            
+            // Snap logika - X tengelyen (vertikális igazítás)
+            let snappedX = null;
+            for (const levelX of verticalLevels) {
+                if (Math.abs(newX - levelX) < SNAP_THRESHOLD) {
+                    snappedX = levelX;
+                    break;
+                }
+            }
+            
+            // Ha van snap, használjuk azt
+            if (snappedY !== null) {
+                newY = snappedY;
+            }
+            if (snappedX !== null) {
+                newX = snappedX;
+            }
+            
+            // Pozíció frissítése
+            d.x = newX;
+            d.y = newY;
+            d3.select(this).attr('transform', `translate(${d.x},${d.y})`);
+            
+            // Segédvonalak frissítése - aktív snap kiemelése
+            if (guidesGroup) {
+                // Vízszintes vonalak (Y snap)
+                guidesGroup.selectAll('.guide-horizontal')
+                    .style('stroke', function() {
+                        const lineY = parseFloat(d3.select(this).attr('data-level'));
+                        if (Math.abs(lineY - newY) < 1) {
+                            return 'rgba(74, 144, 226, 1)'; // Aktív snap - erős kék
+                        }
+                        return 'rgba(74, 144, 226, 0.3)'; // Inaktív - halvány
+                    })
+                    .style('stroke-width', function() {
+                        const lineY = parseFloat(d3.select(this).attr('data-level'));
+                        return Math.abs(lineY - newY) < 1 ? 2 : 1;
+                    })
+                    .style('stroke-dasharray', function() {
+                        const lineY = parseFloat(d3.select(this).attr('data-level'));
+                        return Math.abs(lineY - newY) < 1 ? 'none' : '5,5';
+                    });
+                
+                // Vertikális vonalak (X snap)
+                guidesGroup.selectAll('.guide-vertical')
+                    .style('stroke', function() {
+                        const lineX = parseFloat(d3.select(this).attr('data-level'));
+                        if (Math.abs(lineX - newX) < 1) {
+                            return 'rgba(226, 144, 74, 1)'; // Aktív snap - erős narancs
+                        }
+                        return 'rgba(226, 144, 74, 0.3)'; // Inaktív - halvány
+                    })
+                    .style('stroke-width', function() {
+                        const lineX = parseFloat(d3.select(this).attr('data-level'));
+                        return Math.abs(lineX - newX) < 1 ? 2 : 1;
+                    })
+                    .style('stroke-dasharray', function() {
+                        const lineX = parseFloat(d3.select(this).attr('data-level'));
+                        return Math.abs(lineX - newX) < 1 ? 'none' : '5,5';
+                    });
+                
+                // Aktív snap jelző szöveg
+                guidesGroup.selectAll('.snap-indicator').remove();
+                
+                // Y snap jelző
+                if (snappedY !== null) {
+                    const genIndex = generationLevels.indexOf(snappedY);
+                    const genLabel = genIndex >= 0 ? `Gen ${genIndex}` : '';
+                    
+                    guidesGroup.append('text')
+                        .attr('class', 'snap-indicator')
+                        .attr('x', newX + 100)
+                        .attr('y', snappedY - 5)
+                        .style('fill', '#4A90D9')
+                        .style('font-size', '12px')
+                        .style('font-weight', 'bold')
+                        .text(`📍 ${genLabel}`);
+                }
+                
+                // X snap jelző
+                if (snappedX !== null) {
+                    // Ki van ezen az X pozíción?
+                    const alignedPerson = positionedNodes.find(n => n.id !== currentDraggedId && Math.abs(n.x - snappedX) < 1);
+                    const alignLabel = alignedPerson ? alignedPerson.name.split(' ')[0] : '';
+                    
+                    guidesGroup.append('text')
+                        .attr('class', 'snap-indicator')
+                        .attr('x', snappedX + 5)
+                        .attr('y', newY - 50)
+                        .attr('transform', `rotate(-90, ${snappedX + 5}, ${newY - 50})`)
+                        .style('fill', '#E29048')
+                        .style('font-size', '11px')
+                        .style('font-weight', 'bold')
+                        .text(`⬆ ${alignLabel}`);
+                }
+            }
+            
+            // Vonalak azonnali újrarajzolása (csak a módosított node vonalai)
+            redrawLinksForNode(d.id, positionedNodes, layoutLinks);
+        })
+        .on('end', function(event, d) {
+            isDragging = false;
+            currentDraggedId = null;
+            d3.select(this).classed('dragging', false);
+            
+            // Segédvonalak eltávolítása
+            if (guidesGroup) {
+                guidesGroup.remove();
+                guidesGroup = null;
+            }
+            
+            // Zoom visszakapcsolása
+            svg.call(zoom);
+            
+            // Pozíció mentése az adatbázisba
+            saveNodePosition(d.id, d.x, d.y);
+            
+            // Teljes vonal újrarajzolás
+            redrawAllLinks(positionedNodes, layoutLinks);
+        });
+    
     // Csomópontok (személyek) rajzolása
     const nodes = g.append('g')
         .attr('class', 'nodes')
@@ -350,6 +630,7 @@ function renderTree() {
         .append('g')
         .attr('class', 'tree-node')
         .attr('transform', d => `translate(${d.x},${d.y})`)
+        .call(dragBehavior)  // Drag behavior hozzáadása
         .on('click', (event, d) => {
             event.stopPropagation();
             openPersonModal(d.id);
@@ -1018,143 +1299,146 @@ function buildGenerationLayout(sizes) {
     
     const sortedGens = Array.from(genGroups.keys()).sort((a, b) => a - b);
     
-    // ============ 4. VIRTUÁLIS HÁZASSÁGI CSOMÓPONTOK (M-Node) ============
-    const marriageNodes = new Map();  // marriageId -> { x, y, person1_id, person2_id }
+    // ============ 4. CROSSING-FREE LAYOUT ALGORITHM ============
+    // 
+    // A vonalak kereszteződésének elkerülése érdekében a következő elveket alkalmazzuk:
+    // 1. Minden családi egység (szülők + gyerekek) összefüggő X-tartományban helyezkedik el
+    // 2. A szülők a gyerekeik középpontja fölé kerülnek
+    // 3. A testvérek egymás mellett vannak, a házastársak a külső széleken
+    // 4. Az X-sorrend konzisztens minden generációban
+    //
+    // ALGORITMUS:
+    // 1. BOTTOM-UP: Számítsuk ki minden személy/család szélességét a leszármazottak alapján
+    // 2. TOP-DOWN: Pozícionáljuk a személyeket a szülők alapján
     
-    // ============ 5. NUCLEAR FAMILY BLOKKOK LÉTREHOZÁSA ============
-    // Minden család-egység: [ex-partnerek] [fő személy] [aktív partner]
-    
-    const buildFamilyBlock = (personId, gen) => {
-        const person = treeData.nodes.find(n => n.id === personId);
-        const allPartners = partnersOf.get(personId) || [];
-        
-        // Szétválasztás: ex és aktív partnerek
-        const exPartners = [];
-        const activePartners = [];
-        
-        allPartners.forEach(p => {
-            // Csak azokat a partnereket vesszük, akik ugyanabban a generációban vannak
-            if (generations.get(p.partnerId) !== gen) return;
-            
-            if (p.status === 'divorced' || p.status === 'ended' || p.status === 'separated') {
-                exPartners.push(p);
-            } else {
-                activePartners.push(p);
-            }
-        });
-        
-        // Sorrend: ex-partnerek | fő személy | aktív partnerek
-        return {
-            mainPerson: personId,
-            exPartners: exPartners.map(p => p.partnerId),
-            activePartners: activePartners.map(p => p.partnerId),
-            marriages: allPartners.filter(p => generations.get(p.partnerId) === gen)
-        };
-    };
-    
-    // ============ 6. SZÉLESSÉG SZÁMÍTÁSA (BOTTOM-UP) ============
-    const subtreeWidths = new Map();  // familyId -> width
-    
-    const calculateFamilyWidth = (familyId) => {
-        if (subtreeWidths.has(familyId)) return subtreeWidths.get(familyId);
-        
-        const family = familyMap.get(familyId);
-        if (!family) return horizontalSpacing;
-        
-        const children = family.children || [];
-        if (children.length === 0) {
-            // Nincs gyerek - csak a szülők szélessége
-            subtreeWidths.set(familyId, horizontalSpacing * 2);
-            return horizontalSpacing * 2;
-        }
-        
-        // Gyerekek szélességének összege
-        let childrenWidth = 0;
-        children.forEach(childId => {
-            // A gyerek saját családjainak szélessége
-            const childPartners = partnersOf.get(childId) || [];
-            const childFamilyIds = childPartners
-                .filter(p => {
-                    // Csak azok a családok, ahol ő szülő (van közös gyerek)
-                    const m = treeData.marriages?.find(m => m.id === p.marriageId);
-                    return m && familyMap.get(p.marriageId)?.children?.length > 0;
-                })
-                .map(p => p.marriageId);
-            
-            if (childFamilyIds.length > 0) {
-                childFamilyIds.forEach(fId => {
-                    childrenWidth += calculateFamilyWidth(fId);
-                });
-            } else {
-                // Gyereknek nincs saját családja - alap szélesség
-                const partnerCount = childPartners.length;
-                childrenWidth += horizontalSpacing * (1 + partnerCount);
-            }
-        });
-        
-        // A minimum szélesség a szülők szélessége
-        const parentsWidth = horizontalSpacing * 2;
-        const width = Math.max(parentsWidth, childrenWidth);
-        
-        subtreeWidths.set(familyId, width);
-        return width;
-    };
-    
-    // Számítsuk ki minden család szélességét
-    familyMap.forEach((family, familyId) => {
-        calculateFamilyWidth(familyId);
-    });
-    
-    // ============ 7. POZÍCIONÁLÁS (TOP-DOWN) ============
     const positionedNodes = [];
     const nodePositions = new Map();  // person_id -> { x, y }
     const layoutLinks = [];
-    const occupiedSlots = new Map();  // gen -> Set of occupied X positions
+    const marriageNodes = new Map();
     
-    const getOccupiedForGen = (gen) => {
-        if (!occupiedSlots.has(gen)) occupiedSlots.set(gen, new Set());
-        return occupiedSlots.get(gen);
+    // Személy szélességének kiszámítása (a teljes leszármazott-fa alapján)
+    const personSubtreeWidth = new Map();
+    
+    // Rekurzív szélesség-számítás (bottom-up)
+    const calculatePersonWidth = (personId, visited = new Set()) => {
+        if (visited.has(personId)) return horizontalSpacing;
+        visited.add(personId);
+        
+        if (personSubtreeWidth.has(personId)) {
+            return personSubtreeWidth.get(personId);
+        }
+        
+        const person = treeData.nodes.find(n => n.id === personId);
+        if (!person) {
+            personSubtreeWidth.set(personId, horizontalSpacing);
+            return horizontalSpacing;
+        }
+        
+        // A személy saját szélessége (1 hely) + házastársak
+        const partners = partnersOf.get(personId) || [];
+        let ownWidth = horizontalSpacing;
+        
+        // Gyerekek szélességének összege
+        const children = childrenOf.get(personId) || [];
+        let childrenTotalWidth = 0;
+        
+        children.forEach(childId => {
+            const childWidth = calculatePersonWidth(childId, new Set(visited));
+            // A gyerek házastársainak szélessége is számít
+            const childPartners = partnersOf.get(childId) || [];
+            const childWithPartnersWidth = childWidth + (childPartners.length * horizontalSpacing);
+            childrenTotalWidth += childWithPartnersWidth;
+        });
+        
+        // A szélesség a nagyobb: saját méret vagy gyerekek összmérete
+        const totalWidth = Math.max(ownWidth, childrenTotalWidth);
+        personSubtreeWidth.set(personId, totalWidth);
+        
+        return totalWidth;
     };
     
-    const findFreeSlot = (preferredX, gen) => {
-        const occupied = getOccupiedForGen(gen);
-        let x = preferredX;
-        let attempts = 0;
-        const step = horizontalSpacing;
-        
-        // Teljes kártyaszélességgel ellenőrizzük az ütközést
-        // Egy pozíció "foglalt" ha bármely pozícionált kártya cardWidth távolságon belül van
-        const isOccupied = (testX) => {
-            for (const occupiedX of occupied) {
-                if (Math.abs(testX - occupiedX) < cardWidth + 20) {
-                    return true;
-                }
+    // Számítsuk ki minden személy szélességét
+    treeData.nodes.forEach(n => calculatePersonWidth(n.id));
+    
+    // ============ 5. POZÍCIONÁLÁS - CROSSING-FREE ALGORITHM ============
+    //
+    // KULCS ELVE: A vonalkereszteződések elkerülése érdekében:
+    // 1. Minden család X-tartománya összefüggő és nem átfedő más családokkal
+    // 2. A gyerekek mindig a szüleik alatt helyezkednek el
+    // 3. Az X-sorrend konzisztens generációkon keresztül
+    //
+    // ALGORITMUS:
+    // 1. Fázis: Számítsuk ki minden családnak a szükséges szélességét (bottom-up)
+    // 2. Fázis: Rendeljünk X-tartományokat a családoknak (top-down)
+    // 3. Fázis: Pozícionáljuk a személyeket a tartományokon belül
+    
+    const occupiedRanges = new Map();  // gen -> [{left, right, familyId}] - foglalt X tartományok
+    
+    // Segédfüggvény: ellenőrizzük hogy egy tartomány szabad-e
+    const isRangeFree = (gen, left, right) => {
+        if (!occupiedRanges.has(gen)) return true;
+        const ranges = occupiedRanges.get(gen);
+        for (const r of ranges) {
+            // Átfedés ellenőrzése
+            if (!(right <= r.left || left >= r.right)) {
+                return false;
             }
-            return false;
-        };
+        }
+        return true;
+    };
+    
+    // Segédfüggvény: foglaljunk egy tartományt
+    const reserveRange = (gen, left, right, familyId) => {
+        if (!occupiedRanges.has(gen)) occupiedRanges.set(gen, []);
+        occupiedRanges.get(gen).push({ left, right, familyId });
+    };
+    
+    // Segédfüggvény: találjunk szabad helyet egy adott szélesség számára
+    const findFreeRange = (gen, preferredCenter, width) => {
+        const halfWidth = width / 2;
+        let left = preferredCenter - halfWidth;
+        let right = preferredCenter + halfWidth;
         
-        while (isOccupied(x) && attempts < 100) {
-            // Alternáló keresés: jobbra, balra, jobbra+1, balra+1, ...
-            attempts++;
-            if (attempts % 2 === 1) {
-                x = preferredX + Math.ceil(attempts / 2) * step;
-            } else {
-                x = preferredX - Math.ceil(attempts / 2) * step;
+        if (isRangeFree(gen, left, right)) {
+            return { left, right };
+        }
+        
+        // Ha nincs szabad hely, keressünk jobbra és balra
+        const step = horizontalSpacing;
+        for (let offset = step; offset < 5000; offset += step) {
+            // Próbáljuk jobbra
+            if (isRangeFree(gen, preferredCenter + offset - halfWidth, preferredCenter + offset + halfWidth)) {
+                return { left: preferredCenter + offset - halfWidth, right: preferredCenter + offset + halfWidth };
+            }
+            // Próbáljuk balra
+            if (isRangeFree(gen, preferredCenter - offset - halfWidth, preferredCenter - offset + halfWidth)) {
+                return { left: preferredCenter - offset - halfWidth, right: preferredCenter - offset + halfWidth };
             }
         }
         
-        occupied.add(x);
-        return x;
+        // Fallback: toljuk a tartomány jobb szélére
+        const ranges = occupiedRanges.get(gen) || [];
+        if (ranges.length === 0) return { left, right };
+        const maxRight = Math.max(...ranges.map(r => r.right));
+        return { left: maxRight + horizontalSpacing/2, right: maxRight + horizontalSpacing/2 + width };
     };
     
+    // Személy pozícionálása
     const positionPerson = (personId, x, gen) => {
         if (nodePositions.has(personId)) return nodePositions.get(personId);
         
         const person = treeData.nodes.find(n => n.id === personId);
         if (!person) return null;
         
-        const y = gen * verticalSpacing;
-        const finalX = findFreeSlot(x, gen);
+        // Elmentett pozíció használata, ha van
+        let finalX = x;
+        let finalY = gen * verticalSpacing;
+        
+        if (savedPositions[personId]) {
+            finalX = savedPositions[personId].x;
+            finalY = savedPositions[personId].y;
+            console.log(`Elmentett pozíció használata: ${person.name} (${personId}) -> (${finalX}, ${finalY})`);
+        }
         
         // Egyenesági és rokonsági fok hozzáadása
         const isDirectLine = directLineage.has(personId);
@@ -1163,450 +1447,392 @@ function buildGenerationLayout(sizes) {
         positionedNodes.push({ 
             ...person, 
             x: finalX, 
-            y,
+            y: finalY,
             isDirectLine,
             relationLabel,
             generation: gen
         });
-        nodePositions.set(personId, { x: finalX, y });
+        nodePositions.set(personId, { x: finalX, y: finalY });
         
-        return { x: finalX, y };
+        return { x: finalX, y: finalY };
     };
     
-    // Pozícionálás generációnként
-    sortedGens.forEach((gen, genIndex) => {
-        const personsInGen = genGroups.get(gen) || [];
-        const processed = new Set();
+    // ============ FÁZIS 1: Családok szélességének kiszámítása (bottom-up) ============
+    const familyWidths = new Map();  // familyId -> width (összes gyerek + házastársaik)
+    
+    // Segédfüggvény: egy szülőpár és összes leszármazottjának eltolása X irányban
+    // FONTOS: Csak a vér szerinti leszármazottakat toljuk, NEM a házastársakat!
+    // Különben a házastársak szülei nem mozdulnak és vonalkereszteződés lesz.
+    const shiftFamilyAndDescendants = (marriageId, deltaX) => {
+        if (Math.abs(deltaX) < 0.1) return;
         
-        // Csoportosítás családi egységekbe
-        // A családi egység: a fő személy + az ő partnerei (ex és aktív)
-        // Ha valakinek több partnere van, mindegyik partner a fő személy körül helyezkedik el
-        const familyUnits = [];
+        const family = familyMap.get(marriageId);
+        if (!family) return;
         
-        // Először a gyökérszemélyt dolgozzuk fel, ha ebben a generációban van
-        const rootInThisGen = rootPersonId && generations.get(rootPersonId) === gen;
-        const processingOrder = rootInThisGen 
-            ? [rootPersonId, ...personsInGen.filter(id => id !== rootPersonId)]
-            : personsInGen;
+        console.log(`  Cascade shift: házasság ${marriageId}, deltaX=${deltaX}`);
         
-        processingOrder.forEach(personId => {
-            if (processed.has(personId)) return;
+        // Csak a vér szerinti gyerekeket és AZOK leszármazottait toljuk
+        const shiftBloodDescendants = (personId, visited = new Set()) => {
+            if (visited.has(personId)) return;
+            visited.add(personId);
             
-            const person = treeData.nodes.find(n => n.id === personId);
-            
-            // LÉPÉS 1: Meghatározzuk ki a "központi" személy
-            // Ha a gyökér ebben a generációban van, ő a központ
-            // Ha a gyökér partnere itt van, a partner a központ
-            // Egyébként aki parent_family_id-val rendelkezik
-            let centralPerson = personId;
-            
-            // Gyűjtsük össze az összes személyt, akik össze vannak kötve házasságokkal
-            const collectConnectedPersons = (startId, collected = new Set()) => {
-                if (collected.has(startId)) return collected;
-                if (generations.get(startId) !== gen) return collected;
-                collected.add(startId);
-                
-                const partners = partnersOf.get(startId) || [];
-                partners.forEach(p => {
-                    if (!collected.has(p.partnerId) && generations.get(p.partnerId) === gen) {
-                        collectConnectedPersons(p.partnerId, collected);
-                    }
-                });
-                return collected;
-            };
-            
-            const connectedGroup = collectConnectedPersons(personId);
-            
-            // Már feldolgozott személyek kiszűrése
-            const unprocessedInGroup = [...connectedGroup].filter(id => !processed.has(id));
-            if (unprocessedInGroup.length === 0) return;
-            
-            // Meghatározzuk a központi személyt
-            // Prioritás: 
-            // 1. gyökérszemély
-            // 2. aki a legtöbb partnerrel rendelkezik a csoportban (ő köti össze a többit)
-            // 3. parent_family_id-val rendelkező
-            // 4. első
-            if (rootInThisGen && connectedGroup.has(rootPersonId)) {
-                centralPerson = rootPersonId;
-            } else {
-                // Keressük meg aki a legtöbb partnerrel rendelkezik a csoporton belül
-                let maxPartners = 0;
-                let bestCandidate = unprocessedInGroup[0];
-                
-                for (const id of unprocessedInGroup) {
-                    const partners = (partnersOf.get(id) || [])
-                        .filter(p => connectedGroup.has(p.partnerId));
-                    if (partners.length > maxPartners) {
-                        maxPartners = partners.length;
-                        bestCandidate = id;
-                    }
-                }
-                
-                // Ha van valaki több partnerrel, ő a központ
-                if (maxPartners > 1) {
-                    centralPerson = bestCandidate;
-                } else {
-                    // Egyébként parent_family_id alapján
-                    for (const id of unprocessedInGroup) {
-                        const p = treeData.nodes.find(n => n.id === id);
-                        if (p && p.parent_family_id) {
-                            centralPerson = id;
-                            break;
-                        }
-                    }
-                }
+            const pos = nodePositions.get(personId);
+            if (pos) {
+                pos.x += deltaX;
+                console.log(`    Eltolva: ${treeData.nodes.find(n => n.id === personId)?.name} x += ${deltaX}`);
             }
             
-            // DEBUG: Ki a központ?
-            const centralName = treeData.nodes.find(n => n.id === centralPerson)?.name;
-            const groupNames = unprocessedInGroup.map(id => treeData.nodes.find(n => n.id === id)?.name);
-            console.log(`Központi személy: ${centralName} (ID: ${centralPerson}), csoport: [${groupNames.join(', ')}]`);
-            
-            // LÉPÉS 2: Elrendezzük a személyeket a központi személy köré
-            // 
-            // SZABÁLY: A központi személy (gyökér) a bal oldalon
-            // Az aktív partner mellette jobbra
-            // Az aktív partner ex-partnerei még jobbra
-            // A központ ex-partnerei a központtól balra
-            //
-            // Példa: Ha Lajos a gyökér, Ildikó az aktív partnere, András Ildikó exe:
-            // Sorrend: [Lajos] - [Ildikó] - [András]
-            //
-            // A házassági vonalak a valódi párok között lesznek:
-            // Lajos ❤️ Ildikó, Ildikó 💔 András
-            // András és Lajos NINCSENEK összekötve!
-            
-            const centralPartners = (partnersOf.get(centralPerson) || [])
-                .filter(p => generations.get(p.partnerId) === gen);
-            
-            const exPartnersOfCentral = [];
-            const activePartnersOfCentral = [];
-            
-            centralPartners.forEach(p => {
-                if (p.status === 'divorced' || p.status === 'ended' || p.status === 'separated') {
-                    exPartnersOfCentral.push(p.partnerId);
-                } else {
-                    activePartnersOfCentral.push(p.partnerId);
-                }
-            });
-            
-            // SORREND FELÉPÍTÉSE:
-            // [központ ex-ek] - [központ] - [aktív partnerek] - [aktív partnerek ex-ei]
-            
-            const leftSide = [];   // Központ ex-partnerei (balra a központtól)
-            const rightSide = [];  // Aktív partnerek és azok ex-ei (jobbra)
-            
-            // Központ ex-partnerei balra, ÉS az ex-partnerek AKTÍV partnerei még balrább
-            exPartnersOfCentral.forEach(exId => {
-                if (!processed.has(exId)) {
-                    // Az ex-partner aktív partnerei ELŐTTE (még balrább)
-                    const exPersonPartners = partnersOf.get(exId) || [];
-                    exPersonPartners.forEach(p => {
-                        if (p.partnerId !== centralPerson && 
-                            generations.get(p.partnerId) === gen && 
-                            !processed.has(p.partnerId) &&
-                            !leftSide.includes(p.partnerId) &&
-                            !rightSide.includes(p.partnerId) &&
-                            (p.status === 'active' || p.status === 'married')) {
-                            // Ez az ex-partner jelenlegi partnere - balra kerül (az ex-partner előtt)
-                            leftSide.push(p.partnerId);
-                        }
-                    });
-                    leftSide.push(exId);
-                }
-            });
-            
-            // Aktív partnerek jobbra, és utánuk az ő ex-partnereik
-            activePartnersOfCentral.forEach(activeId => {
-                if (!processed.has(activeId)) {
-                    rightSide.push(activeId);
-                    
-                    // Az aktív partner ex-partnerei az aktív partner UTÁN (még jobbrább)
-                    const activePersonPartners = partnersOf.get(activeId) || [];
-                    activePersonPartners.forEach(p => {
-                        if (p.partnerId !== centralPerson && 
-                            generations.get(p.partnerId) === gen && 
-                            !processed.has(p.partnerId) &&
-                            !leftSide.includes(p.partnerId) &&
-                            !rightSide.includes(p.partnerId)) {
-                            // Ez az aktív partner ex-partnere - jobbra kerül (az aktív partner után)
-                            rightSide.push(p.partnerId);
-                        }
+            // A személy saját házasságai - csak a GYEREKEKET toljuk, a házastársat NEM!
+            const partners = partnersOf.get(personId) || [];
+            partners.forEach(p => {
+                // A házastársat NEM toljuk - az ő családja külön marad
+                // Csak a közös gyerekeket toljuk
+                const partnerFamily = familyMap.get(p.marriageId);
+                if (partnerFamily && partnerFamily.children) {
+                    partnerFamily.children.forEach(childId => {
+                        shiftBloodDescendants(childId, visited);
                     });
                 }
             });
+        };
+        
+        // Minden gyereket és azok vér szerinti leszármazottait eltoljuk
+        if (family.children) {
+            const visited = new Set();
+            family.children.forEach(childId => shiftBloodDescendants(childId, visited));
+        }
+    };
+    
+    // Rekurzív szélesség-számítás
+    const calculateFamilyChildrenWidth = (familyId, visited = new Set()) => {
+        if (visited.has(familyId)) return 0;
+        visited.add(familyId);
+        
+        if (familyWidths.has(familyId)) return familyWidths.get(familyId);
+        
+        const family = familyMap.get(familyId);
+        if (!family) {
+            familyWidths.set(familyId, 0);
+            return 0;
+        }
+        
+        const children = family.children || [];
+        if (children.length === 0) {
+            familyWidths.set(familyId, 0);
+            return 0;
+        }
+        
+        // Számítsuk ki minden gyerek szélességét (ő + házastársai + leszármazottai)
+        let totalWidth = 0;
+        children.forEach(childId => {
+            // A gyerek maga
+            let childWidth = horizontalSpacing;
             
-            // Végső sorrend: [bal oldal (központ ex-ei)] - [központ] - [jobb oldal (aktív + azok ex-ei)]
-            const orderedMembers = [...leftSide, centralPerson, ...rightSide];
+            // A gyerek házastársai
+            const childPartners = (partnersOf.get(childId) || [])
+                .filter(p => generations.get(p.partnerId) === generations.get(childId));
+            childWidth += childPartners.length * horizontalSpacing;
             
-            // DEBUG: Sorrend
-            const leftNames = leftSide.map(id => treeData.nodes.find(n => n.id === id)?.name);
-            const rightNames = rightSide.map(id => treeData.nodes.find(n => n.id === id)?.name);
-            console.log(`Sorrend: [${leftNames.join(', ')}] - [${centralName}] - [${rightNames.join(', ')}]`);
-            console.log(`Ex-partnerek: ${exPartnersOfCentral.map(id => treeData.nodes.find(n => n.id === id)?.name)}`);
-            console.log(`Aktív partnerek: ${activePartnersOfCentral.map(id => treeData.nodes.find(n => n.id === id)?.name)}`);
-            
-            // Jelöljük feldolgozottnak
-            orderedMembers.forEach(id => processed.add(id));
-            
-            // Megkeressük a szülő családot a középpont számításához
-            const centralPersonData = treeData.nodes.find(n => n.id === centralPerson);
-            const parentFamilyId = centralPersonData?.parent_family_id;
-            
-            familyUnits.push({
-                members: orderedMembers,
-                parentFamilyId,
-                mainPerson: centralPerson
+            // A gyerek saját családjainak leszármazott-szélessége
+            childPartners.forEach(p => {
+                if (familyMap.has(p.marriageId)) {
+                    const descendantWidth = calculateFamilyChildrenWidth(p.marriageId, new Set(visited));
+                    childWidth = Math.max(childWidth, descendantWidth);
+                }
             });
+            
+            totalWidth += childWidth;
         });
         
-        // Pozícionálás
-        // Az első generációt (genIndex === 0) középre igazítjuk
-        // A többi generációnál a szülők alá rendezés történik
-        // FONTOS: A gyökér generációja NEM feltétlenül az első, de ha van szülője,
-        // akkor a szülők alá kell kerüljön, nem középre!
+        familyWidths.set(familyId, totalWidth);
+        return totalWidth;
+    };
+    
+    // Számítsuk ki minden család szélességét
+    familyMap.forEach((family, familyId) => {
+        calculateFamilyChildrenWidth(familyId);
+    });
+    
+    // ============ FÁZIS 2: X-tartományok hozzárendelése családoknak ============
+    const familyXRanges = new Map();  // familyId -> { left, right, centerX }
+    
+    // ============ FÁZIS 3: Pozícionálás generációnként ============
+    // CROSSING-FREE ELRENDEZÉS - BOTTOM-UP:
+    // - Generációk ALULRÓL FELFELE feldolgozása
+    // - Először a legalsó generáció (legnagyobb szám)
+    // - Majd minden szülőt a gyerekek X-pozíciója FÖLÉ helyezünk
+    
+    // Rendezzük a generációkat CSÖKKENŐ sorrendbe (legalsó először)
+    const sortedGensBottomUp = [...sortedGens].sort((a, b) => b - a);
+    
+    console.log("=== BOTTOM-UP POZÍCIONÁLÁS ===");
+    console.log("sortedGensBottomUp:", sortedGensBottomUp);
+    
+    // Segédfüggvény: családi egységek összegyűjtése egy generációban
+    const collectFamilyUnitsForGen = (gen) => {
+        const personsInGen = genGroups.get(gen) || [];
+        const processed = new Set();
+        const familyUnits = [];
+        
+        personsInGen.forEach(personId => {
+            if (processed.has(personId)) return;
+            
+            const members = [];
+            const queue = [personId];
+            
+            while (queue.length > 0) {
+                const id = queue.shift();
+                if (processed.has(id)) continue;
+                if (generations.get(id) !== gen) continue;
+                
+                processed.add(id);
+                members.push(id);
+                
+                const partners = partnersOf.get(id) || [];
+                partners.forEach(p => {
+                    if (!processed.has(p.partnerId) && generations.get(p.partnerId) === gen) {
+                        queue.push(p.partnerId);
+                    }
+                });
+            }
+            
+            if (members.length > 0) {
+                let parentFamilyId = null;
+                for (const id of members) {
+                    const person = treeData.nodes.find(n => n.id === id);
+                    if (person?.parent_family_id) {
+                        parentFamilyId = person.parent_family_id;
+                        break;
+                    }
+                }
+                familyUnits.push({ members, parentFamilyId });
+            }
+        });
+        
+        return familyUnits;
+    };
+    
+    // Rendezési segédfüggvény: testvérek születési dátum szerint, házastársak mellettük
+    const orderMembersWithinUnit = (members, parentFamilyId) => {
+        const actualSiblings = members.filter(id => {
+            const person = treeData.nodes.find(n => n.id === id);
+            return person?.parent_family_id === parentFamilyId;
+        });
+        
+        actualSiblings.sort((a, b) => {
+            const personA = treeData.nodes.find(n => n.id === a);
+            const personB = treeData.nodes.find(n => n.id === b);
+            if (personA?.birth_date && personB?.birth_date) {
+                return personA.birth_date.localeCompare(personB.birth_date);
+            }
+            return a - b;
+        });
+        
+        const siblingSpouses = new Map();
+        actualSiblings.forEach(sibId => siblingSpouses.set(sibId, []));
+        
+        members.forEach(id => {
+            if (actualSiblings.includes(id)) return;
+            const partners = partnersOf.get(id) || [];
+            for (const p of partners) {
+                if (actualSiblings.includes(p.partnerId)) {
+                    siblingSpouses.get(p.partnerId).push(id);
+                    break;
+                }
+            }
+        });
+        
+        const orderedPositioning = [];
+        actualSiblings.forEach((sibId, idx) => {
+            const spouses = siblingSpouses.get(sibId) || [];
+            if (idx === 0 && spouses.length > 0) {
+                spouses.forEach(sp => orderedPositioning.push(sp));
+            }
+            orderedPositioning.push(sibId);
+            if (idx > 0 && spouses.length > 0) {
+                spouses.forEach(sp => {
+                    if (!orderedPositioning.includes(sp)) orderedPositioning.push(sp);
+                });
+            }
+        });
+        
+        members.forEach(id => {
+            if (!orderedPositioning.includes(id)) orderedPositioning.push(id);
+        });
+        
+        return orderedPositioning;
+    };
+    
+    // === BOTTOM-UP POZÍCIONÁLÁS ===
+    // Minden generációt alulról felfele dolgozunk fel
+    // Először a legalsó generáció, majd minden szülőt a gyerekek X-pozíciója fölé helyezünk
+    
+    sortedGensBottomUp.forEach((gen, genIndex) => {
+        console.log(`\n--- Generáció ${gen} feldolgozása (index: ${genIndex}) ---`);
+        const familyUnits = collectFamilyUnitsForGen(gen);
         
         if (genIndex === 0) {
-            // Első generáció (legfelső) - középre igazítás
-            // A gyökér és partnerei az első unit
-            // A testvérek (akiknek ugyanaz a parentFamilyId) mellettük
+            // LEGALSÓ generáció - középre igazítás
+            console.log("Legalsó generáció - középre igazítás");
+            let totalWidth = 0;
+            familyUnits.forEach(unit => totalWidth += unit.members.length * horizontalSpacing);
+            let currentX = -totalWidth / 2 + horizontalSpacing / 2;
             
-            // Először a gyökeret tartalmazó unitot keressük meg (ha ebben a generációban van)
-            const rootUnitIndex = familyUnits.findIndex(u => 
-                u.members.includes(rootPersonId) || u.mainPerson === rootPersonId);
-            
-            // Rendezzük át: gyökér unit középre, testvérek mellé
-            let orderedUnits = [...familyUnits];
-            if (rootUnitIndex > 0) {
-                const rootUnit = orderedUnits.splice(rootUnitIndex, 1)[0];
-                // Testvérek (ugyanaz a parentFamilyId mint a gyökér partnerének)
-                // A gyökér partnere a "családba tartozó" tag
-                const rootPartnerWithFamily = rootUnit.members.find(id => {
-                    const p = treeData.nodes.find(n => n.id === id);
-                    return p && p.parent_family_id && id !== rootPersonId;
+            familyUnits.forEach(unit => {
+                const ordered = orderMembersWithinUnit(unit.members, unit.parentFamilyId);
+                const unitWidth = ordered.length * horizontalSpacing;
+                const unitLeft = currentX - horizontalSpacing / 2;
+                
+                reserveRange(gen, unitLeft, unitLeft + unitWidth, unit.parentFamilyId);
+                
+                ordered.forEach((id, idx) => {
+                    positionPerson(id, currentX + idx * horizontalSpacing, gen);
                 });
                 
-                if (rootPartnerWithFamily) {
-                    const siblingParentFamily = treeData.nodes.find(n => n.id === rootPartnerWithFamily)?.parent_family_id;
-                    // Testvérek elé beszúrjuk a gyökér unitot
-                    const siblingIdx = orderedUnits.findIndex(u => u.parentFamilyId === siblingParentFamily);
-                    if (siblingIdx >= 0) {
-                        orderedUnits.splice(siblingIdx, 0, rootUnit);
-                    } else {
-                        orderedUnits.unshift(rootUnit);
-                    }
-                } else {
-                    orderedUnits.unshift(rootUnit);
+                currentX += unitWidth;
+            });
+        } else {
+            // FELSŐBB generációk - gyerekek X-pozíciója FÖLÉ
+            // Minden személyt a saját gyerekei X-középpontja fölé kell tenni!
+            
+            const processedInThisGen = new Set();
+            
+            // Csoportosítás: szülőpárok az alapján, hogy melyik házassághoz tartoznak
+            // és hol vannak a gyerekek
+            const parentPlacements = []; // { members: [], childCenterX }
+            
+            familyUnits.forEach(unit => {
+                // Minden tag házasságait vizsgáljuk
+                unit.members.forEach(personId => {
+                    if (processedInThisGen.has(personId)) return;
+                    
+                    const marriages = partnersOf.get(personId) || [];
+                    
+                    marriages.forEach(m => {
+                        const family = familyMap.get(m.marriageId);
+                        if (!family) return;
+                        
+                        // Van-e már pozícionált gyerek?
+                        const positionedChildren = (family.children || []).filter(cid => nodePositions.has(cid));
+                        
+                        if (positionedChildren.length > 0) {
+                            // Gyerekek X-pozíciójának középpontja
+                            const childXs = positionedChildren.map(cid => nodePositions.get(cid).x);
+                            const childCenterX = childXs.reduce((a, b) => a + b, 0) / childXs.length;
+                            
+                            // A házasság mindkét tagja
+                            const parents = [family.person1_id, family.person2_id].filter(id => 
+                                id && unit.members.includes(id) && !processedInThisGen.has(id)
+                            );
+                            
+                            if (parents.length > 0) {
+                                console.log(`Házasság ${m.marriageId}: szülők pozícionálása gyerekek fölé (childCenterX=${childCenterX})`);
+                                console.log("  Szülők:", parents.map(id => treeData.nodes.find(n => n.id === id)?.name));
+                                console.log("  Gyerekek:", positionedChildren.map(id => treeData.nodes.find(n => n.id === id)?.name));
+                                
+                                parentPlacements.push({
+                                    members: [family.person1_id, family.person2_id].filter(id => id),
+                                    childCenterX,
+                                    marriageId: m.marriageId
+                                });
+                                
+                                // Jelöljük meg ezeket a személyeket feldolgozottnak
+                                if (family.person1_id) processedInThisGen.add(family.person1_id);
+                                if (family.person2_id) processedInThisGen.add(family.person2_id);
+                            }
+                        }
+                    });
+                });
+            });
+            
+            // Rendezzük a szülőpárokat a gyerekek X-pozíciója szerint (balról jobbra)
+            parentPlacements.sort((a, b) => a.childCenterX - b.childCenterX);
+            
+            console.log("parentPlacements rendezve:", parentPlacements.map(pp => ({
+                members: pp.members.map(id => treeData.nodes.find(n => n.id === id)?.name),
+                childCenterX: pp.childCenterX
+            })));
+            
+            // === ÚJ ALGORITMUS: KÖZVETLENÜL A GYEREKEK FÖLÉ ===
+            // 1. Először minden szülőpárt a gyerekek X-középpontjára tesszük
+            // 2. Ha átfedés van szomszédos párok között, széthúzzuk őket minimálisan
+            // 3. ÚJ: A gyerekeket is eltoljuk, hogy pontosan a szülők alatt maradjanak!
+            
+            // Számítsuk ki az ideális pozíciókat
+            const placements = parentPlacements.map(pp => {
+                const width = pp.members.length * horizontalSpacing;
+                return {
+                    ...pp,
+                    width,
+                    idealLeft: pp.childCenterX - width / 2,
+                    idealRight: pp.childCenterX + width / 2,
+                    left: pp.childCenterX - width / 2,  // aktuális pozíció
+                    right: pp.childCenterX + width / 2,
+                    shiftApplied: 0  // mennyit toltuk el a szülőket
+                };
+            });
+            
+            // Oldjuk meg az átfedéseket balról jobbra haladva
+            for (let i = 1; i < placements.length; i++) {
+                const prev = placements[i - 1];
+                const curr = placements[i];
+                
+                const gap = 20; // minimum távolság szülőpárok között
+                const overlap = prev.right + gap - curr.left;
+                
+                if (overlap > 0) {
+                    // Van átfedés - széthúzás
+                    // A curr-t jobbra toljuk, de a gyerekeket NEM toljuk!
+                    // A vonalak ortogonálisak lesznek és routing-gal kerüljük el a kereszteződést
+                    const newLeft = prev.right + gap;
+                    const shift = newLeft - curr.left;
+                    
+                    curr.left = newLeft;
+                    curr.right = curr.left + curr.width;
+                    curr.shiftApplied = shift;
+                    
+                    console.log(`Átfedés korrigálva: ${prev.members[0]} és ${curr.members[0]} között, overlap=${overlap}, shift=${shift}`);
+                    // NEM hívjuk a shiftFamilyAndDescendants-et - a szülők eltolódnak, a gyerekek maradnak
                 }
             }
             
-            const totalWidth = orderedUnits.reduce((sum, unit) => 
-                sum + unit.members.length * horizontalSpacing, 0);
-            let currentX = -totalWidth / 2 + horizontalSpacing / 2;
-            
-            orderedUnits.forEach(unit => {
-                unit.members.forEach((id, idx) => {
-                    positionPerson(id, currentX + idx * horizontalSpacing, gen);
+            // Pozícionáljuk a szülőpárokat az új helyükre
+            placements.forEach(({ members, left, width, marriageId, childCenterX }) => {
+                const currentX = left + horizontalSpacing / 2;
+                
+                console.log(`Pozícionálás: childCenterX=${childCenterX}, left=${left}, currentX=${currentX}`);
+                
+                reserveRange(gen, left, left + width, marriageId);
+                
+                members.forEach((id, idx) => {
+                    if (!nodePositions.has(id)) {
+                        positionPerson(id, currentX + idx * horizontalSpacing, gen);
+                    }
                 });
-                currentX += unit.members.length * horizontalSpacing;
             });
-        } else {
-            // Következő generációk - a szülők alá igazítás
-            // Csoportosítás szülő család szerint
-            const byParentFamily = new Map();  // parentFamilyId -> units[]
-            const orphans = [];
             
+            // Maradék személyek (akiknek nincs pozícionált gyerekük)
             familyUnits.forEach(unit => {
-                if (unit.parentFamilyId && familyMap.has(unit.parentFamilyId)) {
-                    if (!byParentFamily.has(unit.parentFamilyId)) {
-                        byParentFamily.set(unit.parentFamilyId, []);
-                    }
-                    byParentFamily.get(unit.parentFamilyId).push(unit);
-                } else {
-                    orphans.push(unit);
-                }
-            });
-            
-            // DEBUG: Nézzük meg a csoportosítást
-            console.log(`Gen ${gen} - byParentFamily:`, 
-                Array.from(byParentFamily.entries()).map(([pfId, units]) => ({
-                    parentFamilyId: pfId,
-                    units: units.map(u => u.members.map(id => treeData.nodes.find(n => n.id === id)?.name))
-                }))
-            );
-            console.log(`Gen ${gen} - orphans:`, 
-                orphans.map(u => u.members.map(id => treeData.nodes.find(n => n.id === id)?.name))
-            );
-            
-            // Rendezzük a családokat a szülők X pozíciója szerint (balról jobbra)
-            // Ez biztosítja, hogy a bal oldali családok előbb kerüljenek pozícionálásra
-            const sortedParentFamilies = Array.from(byParentFamily.entries()).sort((a, b) => {
-                const [pfIdA, unitsA] = a;
-                const [pfIdB, unitsB] = b;
-                
-                const familyA = familyMap.get(pfIdA);
-                const familyB = familyMap.get(pfIdB);
-                
-                // Szülők középpontja alapján rendezés
-                const getCenterX = (family) => {
-                    if (!family) return 0;
-                    const p1Pos = nodePositions.get(family.person1_id);
-                    const p2Pos = nodePositions.get(family.person2_id);
-                    if (p1Pos && p2Pos) return (p1Pos.x + p2Pos.x) / 2;
-                    if (p1Pos) return p1Pos.x;
-                    if (p2Pos) return p2Pos.x;
-                    return 0;
-                };
-                
-                return getCenterX(familyA) - getCenterX(familyB);
-            });
-            
-            // Pozícionálás a szülők középpontja alá
-            sortedParentFamilies.forEach(([parentFamilyId, units]) => {
-                const family = familyMap.get(parentFamilyId);
-                if (!family) return;
-                
-                // Szülők pozíciói
-                const p1Pos = nodePositions.get(family.person1_id);
-                const p2Pos = nodePositions.get(family.person2_id);
-                
-                let centerX = 0;
-                let hasValidParentPos = false;
-                
-                if (p1Pos && p2Pos) {
-                    centerX = (p1Pos.x + p2Pos.x) / 2;
-                    hasValidParentPos = true;
-                } else if (p1Pos) {
-                    centerX = p1Pos.x;
-                    hasValidParentPos = true;
-                } else if (p2Pos) {
-                    centerX = p2Pos.x;
-                    hasValidParentPos = true;
-                }
-                
-                // Debug: ha a szülők nincsenek pozícionálva
-                if (!hasValidParentPos) {
-                    const p1Name = treeData.nodes.find(n => n.id === family.person1_id)?.name || `ID:${family.person1_id}`;
-                    const p2Name = treeData.nodes.find(n => n.id === family.person2_id)?.name || `ID:${family.person2_id}`;
-                    console.warn(`⚠️ Családfa hiba [Family ${parentFamilyId}]: A szülők (${p1Name}, ${p2Name}) nincsenek pozícionálva, a gyerekek nem köthetők össze velük.`);
-                    // Próbáljunk fallback pozíciót használni
-                    const prevGen = gen - 1;
-                    const prevGenNodes = positionedNodes.filter(n => {
-                        const nodeGen = Array.from(generations.entries()).find(([id, g]) => id === n.id)?.[1];
-                        return nodeGen === prevGen;
-                    });
-                    if (prevGenNodes.length > 0) {
-                        centerX = prevGenNodes.reduce((sum, n) => sum + n.x, 0) / prevGenNodes.length;
-                    }
-                }
-                
-                // Összes gyerek szélessége
-                const familyGap = horizontalSpacing * 0.5;
-                
-                // ÚJ LOGIKA: Testvérek egymás mellett, házastársak a testvér külső oldalán
-                // Először azonosítjuk a tényleges testvéreket (akiknek parent_family_id === parentFamilyId)
-                const actualSiblings = [];
-                const siblingToSpouses = new Map(); // siblingId -> [spouse ids]
-                const allMembers = [];
-                
-                units.forEach(unit => {
-                    unit.members.forEach(id => {
-                        allMembers.push(id);
-                        const memberData = treeData.nodes.find(n => n.id === id);
-                        if (memberData && memberData.parent_family_id === parentFamilyId) {
-                            actualSiblings.push(id);
-                            siblingToSpouses.set(id, []);
-                        }
-                    });
-                });
-                
-                // Testvérek rendezése születési dátum szerint (ha van), egyébként ID szerint
-                actualSiblings.sort((a, b) => {
-                    const personA = treeData.nodes.find(n => n.id === a);
-                    const personB = treeData.nodes.find(n => n.id === b);
-                    
-                    // Ha mindkettőnek van születési dátuma, az alapján rendezünk
-                    if (personA?.birth_date && personB?.birth_date) {
-                        return personA.birth_date.localeCompare(personB.birth_date);
-                    }
-                    // Ha csak az egyiknek van, az legyen előbb
-                    if (personA?.birth_date) return -1;
-                    if (personB?.birth_date) return 1;
-                    // Ha egyiknek sincs, ID szerint
-                    return a - b;
-                });
-                
-                // Házastársak hozzárendelése a testvérekhez
-                allMembers.forEach(id => {
-                    if (actualSiblings.includes(id)) return;
-                    
-                    // Ez egy házastárs - megkeressük melyik testvérhez tartozik
-                    const partnerInfo = partnersOf.get(id) || [];
-                    for (const p of partnerInfo) {
-                        if (actualSiblings.includes(p.partnerId) && siblingToSpouses.has(p.partnerId)) {
-                            siblingToSpouses.get(p.partnerId).push(id);
-                            break;
-                        }
-                    }
-                });
-                
-                // Sorrend felépítése: [első testvér házastársai BAL] [összes testvér] [utolsó testvér házastársai JOBB]
-                // Így a szülői vonal csak a testvérek fölött megy
-                const orderedPositioning = [];
-                
-                // Első testvér házastársai balra (ha van)
-                if (actualSiblings.length > 0) {
-                    const firstSiblingSpouses = siblingToSpouses.get(actualSiblings[0]) || [];
-                    orderedPositioning.push(...firstSiblingSpouses);
-                }
-                
-                // Testvérek középen
-                orderedPositioning.push(...actualSiblings);
-                
-                // Többi testvér házastársai jobbra
-                actualSiblings.slice(1).forEach(sibId => {
-                    const spouses = siblingToSpouses.get(sibId) || [];
-                    spouses.forEach(spouseId => {
-                        if (!orderedPositioning.includes(spouseId)) {
-                            orderedPositioning.push(spouseId);
-                        }
-                    });
-                });
-                
-                // Ha maradt valaki aki nem került be
-                allMembers.forEach(id => {
-                    if (!orderedPositioning.includes(id)) {
-                        orderedPositioning.push(id);
-                    }
-                });
-                
-                const totalWidth = orderedPositioning.length * horizontalSpacing;
-                let currentX = centerX - totalWidth / 2 + horizontalSpacing / 2;
-                
-                orderedPositioning.forEach(id => {
-                    positionPerson(id, currentX, gen);
-                    currentX += horizontalSpacing;
-                });
-            });
-            
-            // Árvák - a partnerük mellé
-            orphans.forEach(unit => {
                 unit.members.forEach(id => {
                     if (nodePositions.has(id)) return;
                     
-                    // Keressük a már pozícionált partnert
+                    // Próbáljuk a házastárs mellé tenni
                     const partners = partnersOf.get(id) || [];
-                    let x = 0;
-                    
                     for (const p of partners) {
                         const partnerPos = nodePositions.get(p.partnerId);
                         if (partnerPos) {
-                            x = partnerPos.x + horizontalSpacing;
-                            break;
+                            const { left } = findFreeRange(gen, partnerPos.x + horizontalSpacing, horizontalSpacing);
+                            const x = left + horizontalSpacing / 2;
+                            reserveRange(gen, x - horizontalSpacing/2, x + horizontalSpacing/2, null);
+                            positionPerson(id, x, gen);
+                            return;
                         }
                     }
                     
+                    // Fallback: bármilyen szabad hely
+                    const { left } = findFreeRange(gen, 0, horizontalSpacing);
+                    const x = left + horizontalSpacing / 2;
+                    reserveRange(gen, x - horizontalSpacing/2, x + horizontalSpacing/2, null);
                     positionPerson(id, x, gen);
                 });
             });
@@ -1643,6 +1869,8 @@ function buildGenerationLayout(sizes) {
     }
     
     // ============ 9. SZÜLŐ-GYEREK LINKEK ============
+    // A linkek a szülőktől a gyerekekhez mennek
+    // A renderelés majd családonként csoportosítja és a házasság középpontjából rajzolja
     familyMap.forEach((family, familyId) => {
         if (family.children.length === 0) return;
         
@@ -1655,6 +1883,10 @@ function buildGenerationLayout(sizes) {
             .filter(id => id && nodePositions.has(id));
         
         family.children.forEach(childId => {
+            if (!nodePositions.has(childId)) return;
+            
+            // Minden szülőtől külön link a gyerekhez
+            // A renderelés majd családonként összevonja
             parentIds.forEach(parentId => {
                 layoutLinks.push({
                     source: parentId,
@@ -1670,21 +1902,57 @@ function buildGenerationLayout(sizes) {
 }
 
 // ==================== KAPCSOLAT VONALAK ====================
+// Routing: a szülő-gyerek vonalak a házasság középpontjából indulnak
 function getLinkPath(d) {
+    // Source és target pozíciók meghatározása
+    let sourceX, sourceY, targetX, targetY;
+    
+    if (d.source.isMNode) {
+        // A source egy házasság középpont (M-node)
+        sourceX = d.source.x;
+        sourceY = d.source.y;
+    } else if (typeof d.source === 'object' && d.source.x !== undefined) {
+        sourceX = d.source.x;
+        sourceY = d.source.y;
+    } else {
+        // d.source egy node id - ez házassági linknél fordul elő
+        return null; // Ezt a renderLink kezeli
+    }
+    
+    if (typeof d.target === 'object' && d.target.x !== undefined) {
+        targetX = d.target.x;
+        targetY = d.target.y;
+    } else {
+        return null;
+    }
+    
     if (currentLayout === 'horizontal') {
-        return `M${d.source.x},${d.source.y}
-                C${(d.source.x + d.target.x) / 2},${d.source.y}
-                 ${(d.source.x + d.target.x) / 2},${d.target.y}
-                 ${d.target.x},${d.target.y}`;
+        const midX = (sourceX + targetX) / 2;
+        return `M${sourceX},${sourceY}
+                L${midX},${sourceY}
+                L${midX},${targetY}
+                L${targetX},${targetY}`;
     } else if (currentLayout === 'radial') {
         return d3.linkRadial()
             .angle(d => d.x)
             .radius(d => d.y)(d);
     } else {
-        return `M${d.source.x},${d.source.y}
-                C${d.source.x},${(d.source.y + d.target.y) / 2}
-                 ${d.target.x},${(d.source.y + d.target.y) / 2}
-                 ${d.target.x},${d.target.y}`;
+        // Vertikális nézet: OKOS ROUTING
+        // 1. A házasság középpontjából (mNodeX) indul lefelé
+        // 2. A gyerekek szintje FÖLÖTT (childY - offset) vízszintesen megy a gyerekek középpontjához
+        // 3. Onnan lefelé megy minden gyerekhez
+        
+        // Használjuk a link mNodeX értékét ha van (házasság pozíció)
+        const startX = d.mNodeX !== undefined ? d.mNodeX : sourceX;
+        
+        // A routing szint a gyerek szintje FÖLÖTT van, így a szülők sorából indul
+        const routingY = sourceY + 40; // Kis offset a szülők alatt
+        
+        // A vonal: szülő -> le routing szintre -> vízszintesen -> le a gyerekhez
+        return `M${startX},${sourceY}
+                L${startX},${routingY}
+                L${targetX},${routingY}
+                L${targetX},${targetY}`;
     }
 }
 
@@ -1751,6 +2019,202 @@ function showTooltip(event, d) {
 
 function hideTooltip() {
     d3.selectAll('.node-tooltip').remove();
+}
+
+// ==================== VONALAK ÚJRARAJZOLÁSA DRAG UTÁN ====================
+function redrawLinksForNode(nodeId, positionedNodes, layoutLinks) {
+    // Gyors újrarajzolás drag közben - csak a házassági vonalakat frissítjük
+    // A teljes újrarajzolás a drag end-nél történik
+    
+    // Házassági vonalak frissítése
+    g.selectAll('.marriage-links line').each(function() {
+        const line = d3.select(this);
+        const sourceId = +line.attr('data-source');
+        const targetId = +line.attr('data-target');
+        
+        if (sourceId === nodeId || targetId === nodeId) {
+            const source = positionedNodes.find(n => n.id === sourceId);
+            const target = positionedNodes.find(n => n.id === targetId);
+            
+            if (source && target) {
+                const cardWidth = settings.card_width || 180;
+                const marriageLineGap = 5;
+                
+                if (source.x < target.x) {
+                    line.attr('x1', source.x + cardWidth/2 + marriageLineGap);
+                    line.attr('x2', target.x - cardWidth/2 - marriageLineGap);
+                } else {
+                    line.attr('x1', source.x - cardWidth/2 - marriageLineGap);
+                    line.attr('x2', target.x + cardWidth/2 + marriageLineGap);
+                }
+                line.attr('y1', source.y);
+                line.attr('y2', target.y);
+            }
+        }
+    });
+}
+
+function redrawAllLinks(positionedNodes, layoutLinks) {
+    // Teljes újrarajzolás - töröljük a meglévő vonalakat és újrarajzoljuk
+    g.selectAll('.links').remove();
+    g.selectAll('.marriage-links').remove();
+    g.selectAll('text').filter(function() {
+        // Házassági szívek törlése
+        const text = d3.select(this).text();
+        return text === '❤️' || text === '💔';
+    }).remove();
+    
+    const cardWidth = settings.card_width || 180;
+    const cardHeight = settings.card_height || 80;
+    
+    // Családi linkek újraszámítása
+    const familyChildLinks = new Map();
+    layoutLinks.filter(l => l.type === 'parent-child').forEach(link => {
+        const familyId = link.familyId;
+        if (!familyId) return;
+        
+        if (!familyChildLinks.has(familyId)) {
+            familyChildLinks.set(familyId, { parents: new Set(), children: [] });
+        }
+        
+        familyChildLinks.get(familyId).parents.add(link.source);
+        if (!familyChildLinks.get(familyId).children.includes(link.target)) {
+            familyChildLinks.get(familyId).children.push(link.target);
+        }
+    });
+    
+    const linksGroup = g.insert('g', '.nodes').attr('class', 'links');
+    const color = settings.line_color || '#666';
+    const width = settings.line_width || 2;
+    
+    familyChildLinks.forEach((family, familyId) => {
+        const parentIds = Array.from(family.parents);
+        const childIds = family.children;
+        
+        const parentPositions = parentIds
+            .map(id => positionedNodes.find(n => n.id === id))
+            .filter(Boolean);
+        
+        const childPositions = childIds
+            .map(id => positionedNodes.find(n => n.id === id))
+            .filter(Boolean);
+        
+        if (parentPositions.length === 0 || childPositions.length === 0) return;
+        
+        const parentCenterX = parentPositions.reduce((sum, p) => sum + p.x, 0) / parentPositions.length;
+        const parentBottomY = Math.max(...parentPositions.map(p => p.y)) + cardHeight / 2;
+        const childTopY = Math.min(...childPositions.map(c => c.y)) - cardHeight / 2;
+        
+        const baseChildrenLineY = childTopY - 20;
+        const familyOffset = (familyId % 5) * 8;
+        const childrenLineY = baseChildrenLineY - familyOffset;
+        
+        const baseJunctionY = (parentBottomY + childrenLineY) / 2;
+        const xNormalized = parentCenterX / 1000;
+        const junctionOffset = xNormalized * 15;
+        const junctionY = baseJunctionY + junctionOffset;
+        
+        // Szülőktől lefelé
+        parentPositions.forEach(parent => {
+            linksGroup.append('path')
+                .attr('class', 'tree-link parent-to-junction')
+                .attr('d', `M${parent.x},${parent.y + cardHeight/2} L${parent.x},${junctionY}`)
+                .style('stroke', color)
+                .style('stroke-width', width)
+                .style('fill', 'none');
+        });
+        
+        // Szülők közötti vízszintes
+        if (parentPositions.length === 2) {
+            const leftX = Math.min(parentPositions[0].x, parentPositions[1].x);
+            const rightX = Math.max(parentPositions[0].x, parentPositions[1].x);
+            
+            linksGroup.append('path')
+                .attr('d', `M${leftX},${junctionY} L${rightX},${junctionY}`)
+                .style('stroke', color)
+                .style('stroke-width', width)
+                .style('fill', 'none');
+        }
+        
+        // Lefelé a gyerekek szintjéig
+        linksGroup.append('path')
+            .attr('d', `M${parentCenterX},${junctionY} L${parentCenterX},${childrenLineY}`)
+            .style('stroke', color)
+            .style('stroke-width', width)
+            .style('fill', 'none');
+        
+        // Gyerekek közötti/felé vízszintes
+        const childLeftX = Math.min(...childPositions.map(c => c.x));
+        const childRightX = Math.max(...childPositions.map(c => c.x));
+        const childCenterX = childPositions.reduce((sum, c) => sum + c.x, 0) / childPositions.length;
+        
+        if (Math.abs(parentCenterX - childCenterX) > 1) {
+            linksGroup.append('path')
+                .attr('d', `M${parentCenterX},${childrenLineY} L${childCenterX},${childrenLineY}`)
+                .style('stroke', color)
+                .style('stroke-width', width)
+                .style('fill', 'none');
+        }
+        
+        if (childPositions.length > 1) {
+            linksGroup.append('path')
+                .attr('d', `M${childLeftX},${childrenLineY} L${childRightX},${childrenLineY}`)
+                .style('stroke', color)
+                .style('stroke-width', width)
+                .style('fill', 'none');
+        }
+        
+        // Gyerekekhez lefelé
+        childPositions.forEach(child => {
+            linksGroup.append('path')
+                .attr('d', `M${child.x},${childrenLineY} L${child.x},${child.y - cardHeight/2}`)
+                .style('stroke', color)
+                .style('stroke-width', width)
+                .style('fill', 'none');
+        });
+    });
+    
+    // Házassági vonalak újrarajzolása
+    const marriageLineGap = 5;
+    const marriageLinksGroup = g.insert('g', '.nodes').attr('class', 'marriage-links');
+    
+    layoutLinks.filter(l => l.type === 'marriage').forEach(link => {
+        const source = positionedNodes.find(n => n.id === link.source);
+        const target = positionedNodes.find(n => n.id === link.target);
+        if (!source || !target) return;
+        
+        let x1, x2;
+        if (source.x < target.x) {
+            x1 = source.x + cardWidth/2 + marriageLineGap;
+            x2 = target.x - cardWidth/2 - marriageLineGap;
+        } else {
+            x1 = source.x - cardWidth/2 - marriageLineGap;
+            x2 = target.x + cardWidth/2 + marriageLineGap;
+        }
+        
+        marriageLinksGroup.append('line')
+            .attr('x1', x1)
+            .attr('y1', source.y)
+            .attr('x2', x2)
+            .attr('y2', target.y)
+            .attr('data-source', link.source)
+            .attr('data-target', link.target)
+            .style('stroke', color)
+            .style('stroke-width', width)
+            .style('stroke-dasharray', link.status === 'divorced' ? '5,5' : 'none');
+        
+        // Szív szimbólum
+        const midX = (source.x + target.x) / 2;
+        const midY = (source.y + target.y) / 2;
+        
+        g.append('text')
+            .attr('x', midX)
+            .attr('y', midY + 5)
+            .attr('text-anchor', 'middle')
+            .style('font-size', '14px')
+            .style('fill', link.status === 'divorced' ? '#999' : '#e74c3c')
+            .text(link.status === 'divorced' ? '💔' : '❤️');
+    });
 }
 
 // ==================== FA KÖZÉPRE IGAZÍTÁS ====================

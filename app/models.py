@@ -529,3 +529,39 @@ class BackupLog(db.Model):
             'description': self.description,
             'created_at': self.created_at.isoformat() if self.created_at else None
         }
+
+
+class NodePosition(db.Model):
+    """Családfa csomópontok egyedi pozíciói - drag & drop után mentett helyzetek"""
+    __tablename__ = 'node_positions'
+    
+    id = db.Column(db.Integer, primary_key=True)
+    person_id = db.Column(db.Integer, db.ForeignKey('persons.id'), nullable=False)
+    root_person_id = db.Column(db.Integer, db.ForeignKey('persons.id'), nullable=False)  # Melyik root személynél érvényes ez a pozíció
+    
+    # Pozíció koordináták
+    x = db.Column(db.Float, nullable=False)
+    y = db.Column(db.Float, nullable=False)
+    
+    # Metaadatok
+    created_at = db.Column(db.DateTime, default=datetime.utcnow)
+    updated_at = db.Column(db.DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+    
+    # Kapcsolatok
+    person = db.relationship('Person', foreign_keys=[person_id], backref=db.backref('positions', lazy='dynamic'))
+    root_person = db.relationship('Person', foreign_keys=[root_person_id])
+    
+    # Egyedi index: egy személy csak egyszer szerepelhet egy adott root-nál
+    __table_args__ = (
+        db.UniqueConstraint('person_id', 'root_person_id', name='unique_person_root_position'),
+    )
+    
+    def to_dict(self):
+        return {
+            'id': self.id,
+            'person_id': self.person_id,
+            'root_person_id': self.root_person_id,
+            'x': self.x,
+            'y': self.y,
+            'updated_at': self.updated_at.isoformat() if self.updated_at else None
+        }
