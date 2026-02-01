@@ -9,6 +9,300 @@ let rootPersonId = null;
 let savedPositions = {}; // { personId: { x, y } }
 let isDragging = false;
 let positionedNodesCache = []; // Aktuális pozícionált node-ok cache-elése újrarajzoláshoz
+let currentFanChartPersonId = null; // Track current fan chart person for refresh
+
+// ==================== FAN CHART INTEGRÁCIÓ ====================
+async function showFanChart(personId) {
+    if (!personId) return;
+    currentFanChartPersonId = personId; // Store for refresh
+    
+    // Hide tree, show fan chart container
+    document.getElementById('tree-container').style.display = 'none';
+    const fanContainer = document.getElementById('fan-chart-container');
+    fanContainer.style.display = 'block';
+    fanContainer.innerHTML = ''; // Clear previous
+    
+    // Fetch ancestor data
+    try {
+        const response = await fetch(`/fan-chart/${personId}`);
+        const data = await response.json();
+        renderFanChartIntegrated(data, fanContainer);
+    } catch (error) {
+        console.error('Fan chart betöltési hiba:', error);
+        fanContainer.innerHTML = '<p style="padding:20px;color:#c00;">Hiba a legyező diagram betöltésekor.</p>';
+    }
+}
+
+// Refresh fan chart (called when theme changes)
+function refreshFanChart() {
+    if (currentFanChartPersonId) {
+        showFanChart(currentFanChartPersonId);
+    }
+}
+
+function renderFanChartIntegrated(data, container) {
+    const width = container.clientWidth || 900;
+    const height = container.clientHeight || 600;
+    const radius = Math.min(width, height) / 2 - 40;
+
+    const colorByGender = d => {
+        if (d.depth === 0) return '#f7b731';
+        if (d.data.gender === 'male') return '#4a90e2';
+        if (d.data.gender === 'female') return '#e94e77';
+        return '#bbb';
+    };
+
+    // Pedigree partition
+    function pedigreePartition(root) {
+        const maxDepth = root.height || 5;
+        function setAngles(node, startAngle, endAngle, depth) {
+            node.x0 = startAngle;
+            node.x1 = endAngle;
+            node.y0 = depth * radius / (maxDepth + 1);
+            node.y1 = (depth + 1) * radius / (maxDepth + 1);
+            if (node.children && node.children.length > 0) {
+                const angleStep = (endAngle - startAngle) / node.children.length;
+                let angle = startAngle;
+                for (let child of node.children) {
+                    setAngles(child, angle, angle + angleStep, depth + 1);
+                    angle += angleStep;
+                }
+            }
+        }
+        setAngles(root, 0, 2 * Math.PI, 0);
+        return root;
+    }
+
+    const root = d3.hierarchy(data, d => d.children).sum(d => 1);
+    pedigreePartition(root);
+
+    // Dark mode detection
+    const darkMode = document.documentElement.getAttribute('data-theme') === 'dark';
+    const bgColor = darkMode ? '#1a1a2e' : '#f8f8f8';
+    const textColor = darkMode ? '#e0e0e0' : '#222';
+    const textMuted = darkMode ? '#9e9e9e' : '#444';
+    const strokeColor = darkMode ? '#2d3a5c' : '#fff';
+    const tooltipBg = darkMode ? '#16213e' : '#fff';
+    const tooltipBorder = darkMode ? '#2d3a5c' : '#aaa';
+
+    // Also set container background
+    container.style.background = bgColor;
+
+    const svg = d3.select(container)
+        .append('svg')
+        .attr('width', width)
+        .attr('height', height)
+        .style('background', bgColor);
+
+    const g = svg.append('g');
+
+    // Zoom - same as tree chart
+    const fanZoom = d3.zoom()
+        .scaleExtent([0.3, 5])
+        .on('zoom', (event) => {
+            g.attr('transform', event.transform);
+        });
+    
+    svg.call(fanZoom);
+    
+    // Set initial position to center
+    svg.call(fanZoom.transform, d3.zoomIdentity.translate(width/2, height/2));
+
+    const arc = d3.arc()
+        .startAngle(d => d.x0)
+        .endAngle(d => d.x1)
+        .innerRadius(d => d.y0)
+        .outerRadius(d => d.y1);
+
+    // Tooltip
+    let tooltip = d3.select('.fan-tooltip');
+    if (tooltip.empty()) {
+        tooltip = d3.select('body').append('div')
+            .attr('class', 'fan-tooltip')
+            .style('position', 'absolute')
+            .style('background', tooltipBg)
+            .style('border', `1px solid ${tooltipBorder}`)
+            .style('padding', '6px 10px')
+            .style('border-radius', '4px')
+            .style('pointer-events', 'none')
+            .style('font-size', '14px')
+            .style('color', textColor)
+            .style('box-shadow', '0 2px 8px rgba(0,0,0,0.15)')
+            .style('opacity', 0);
+    } else {
+        // Update tooltip colors for current theme
+        tooltip
+            .style('background', tooltipBg)
+            .style('border', `1px solid ${tooltipBorder}`)
+            .style('color', textColor);
+    }
+
+    // Draw arcs
+    g.selectAll('path.fan-arc')
+        .data(root.descendants())
+        .join('path')
+        .attr('class', d => 'fan-arc ' + (d.depth === 0 ? 'fan-arc-root' : d.data.gender ? 'fan-arc-' + d.data.gender : 'fan-arc-unknown'))
+        .attr('d', arc)
+        .style('fill', colorByGender)
+        .style('stroke', strokeColor)
+        .style('stroke-width', 1.5)
+        .style('cursor', 'pointer')
+        .on('click', function(event, d) {
+            event.stopPropagation();
+            if (d.data.id) {
+                openPersonModal(d.data.id);
+            }
+        })
+        .on('mouseover', function(event, d) {
+            tooltip.transition().duration(150).style('opacity', 1);
+            tooltip.html(`<b>${d.data.name}</b><br>${d.data.birth_year ? 'Született: ' + d.data.birth_year : ''}`)
+                .style('left', (event.pageX + 12) + 'px')
+                .style('top', (event.pageY - 18) + 'px');
+            d3.select(this).style('stroke', textColor).style('stroke-width', 2.5);
+        })
+        .on('mousemove', function(event) {
+            tooltip.style('left', (event.pageX + 12) + 'px').style('top', (event.pageY - 18) + 'px');
+        })
+        .on('mouseout', function() {
+            tooltip.transition().duration(200).style('opacity', 0);
+            d3.select(this).style('stroke', strokeColor).style('stroke-width', 1.5);
+        });
+
+    // Labels: tangent to arc (perpendicular to radius)
+    const labelData = root.descendants().filter(d => d.depth > 0);
+
+    g.selectAll('g.fan-label-group')
+        .data(labelData)
+        .join('g')
+        .attr('class', 'fan-label-group')
+        .attr('pointer-events', 'none')
+        .each(function(d) {
+            const group = d3.select(this);
+            const midAngle = (d.x0 + d.x1) / 2;
+            const midRadius = (d.y0 + d.y1) / 2;
+            const arcLen = (d.x1 - d.x0) * midRadius;
+            const bandHeight = d.y1 - d.y0;
+
+            const x = Math.cos(midAngle - Math.PI/2) * midRadius;
+            const y = Math.sin(midAngle - Math.PI/2) * midRadius;
+
+            // Tangent rotation (text follows the arc)
+            let angleDeg = (midAngle * 180 / Math.PI);
+            let flip = angleDeg > 90 && angleDeg < 270;
+            if (flip) angleDeg += 180;
+
+            group.attr('transform', `translate(${x},${y}) rotate(${angleDeg})`);
+
+            const name = d.data.name || '';
+            // Build year string: birth-death or just birth
+            let yearStr = '';
+            if (d.data.birth_year) {
+                yearStr = d.data.death_year 
+                    ? `${d.data.birth_year}-${d.data.death_year}`
+                    : `${d.data.birth_year}`;
+            } else if (d.data.death_year) {
+                yearStr = `†${d.data.death_year}`;
+            }
+
+            // Calculate available space
+            const availableWidth = bandHeight * 0.92;
+            const availableHeight = arcLen * 0.9;
+            
+            // Character width estimates (lower = more characters fit)
+            const nameCharWidth = 0.48;
+            const yearCharWidth = 0.48;
+            
+            // Calculate font sizes to fit
+            let nameFontSize = Math.min(
+                availableWidth / Math.max(name.length * nameCharWidth, 1),
+                availableHeight * (yearStr ? 0.42 : 0.6),
+                14
+            );
+            let yearFontSize = Math.min(
+                availableWidth / Math.max(yearStr.length * yearCharWidth, 1),
+                availableHeight * 0.32,
+                11
+            );
+            
+            // Ensure minimum readable sizes
+            nameFontSize = Math.max(nameFontSize, 4);
+            yearFontSize = Math.max(yearFontSize, 3);
+            
+            // Truncate name only if really necessary
+            let displayName = name;
+            const maxNameChars = Math.floor(availableWidth / (nameFontSize * nameCharWidth)) + 2;
+            if (name.length > maxNameChars && maxNameChars > 4) {
+                displayName = name.substring(0, maxNameChars - 1) + '…';
+            } else if (maxNameChars <= 4 && name.length > maxNameChars) {
+                displayName = name.substring(0, maxNameChars);
+            }
+
+            // Always show name
+            group.append('text')
+                .attr('text-anchor', 'middle')
+                .attr('dominant-baseline', 'central')
+                .attr('dy', yearStr ? '-0.4em' : '0em')
+                .attr('font-size', nameFontSize + 'px')
+                .attr('font-weight', 600)
+                .attr('fill', textColor)
+                .text(displayName);
+
+            // Always show years if available
+            if (yearStr) {
+                group.append('text')
+                    .attr('text-anchor', 'middle')
+                    .attr('dominant-baseline', 'central')
+                    .attr('dy', '0.7em')
+                    .attr('font-size', yearFontSize + 'px')
+                    .attr('fill', textMuted)
+                    .text(yearStr);
+            }
+        });
+
+    // Center label (root person) - with dynamic sizing
+    const rootRadius = root.y1; // inner circle radius
+    const maxRootWidth = rootRadius * 1.6; // available width for text
+    const rootName = data.name || '';
+    
+    // Build year string for root
+    let rootYearStr = '';
+    if (data.birth_year) {
+        rootYearStr = data.death_year 
+            ? `${data.birth_year}-${data.death_year}`
+            : `${data.birth_year}`;
+    }
+    
+    // Calculate font size to fit
+    let rootNameFontSize = Math.min(maxRootWidth / (rootName.length * 0.55), 16);
+    rootNameFontSize = Math.max(rootNameFontSize, 8);
+    
+    let rootYearFontSize = Math.min(maxRootWidth / (rootYearStr.length * 0.5), 12);
+    rootYearFontSize = Math.max(rootYearFontSize, 7);
+    
+    // Truncate if needed
+    let displayRootName = rootName;
+    const maxRootChars = Math.floor(maxRootWidth / (rootNameFontSize * 0.55)) + 1;
+    if (rootName.length > maxRootChars && maxRootChars > 3) {
+        displayRootName = rootName.substring(0, maxRootChars - 1) + '…';
+    }
+    
+    const rootG = g.append('g').attr('class', 'fan-root-label');
+    rootG.append('text')
+        .attr('text-anchor', 'middle')
+        .attr('dy', rootYearStr ? '-0.2em' : '0.1em')
+        .attr('font-size', rootNameFontSize + 'px')
+        .attr('font-weight', 700)
+        .attr('fill', textColor)
+        .text(displayRootName);
+    if (rootYearStr) {
+        rootG.append('text')
+            .attr('text-anchor', 'middle')
+            .attr('dy', '1.1em')
+            .attr('font-size', rootYearFontSize + 'px')
+            .attr('fill', textMuted)
+            .text(rootYearStr);
+    }
+}
 
 // ==================== INICIALIZÁLÁS ====================
 function initTree() {
@@ -67,12 +361,30 @@ function initTree() {
     
     document.getElementById('tree-layout').addEventListener('change', (e) => {
         currentLayout = e.target.value;
-        updateTree();
+        if (currentLayout === 'fan') {
+            // Fan chart: show fan chart container, hide tree container
+            const rootId = document.getElementById('root-person').value;
+            if (rootId) {
+                showFanChart(rootId);
+            } else {
+                alert('Válassz ki egy gyökér személyt a legyező nézethez!');
+                document.getElementById('tree-layout').value = 'vertical';
+            }
+        } else {
+            // Show tree, hide fan chart
+            document.getElementById('tree-container').style.display = '';
+            document.getElementById('fan-chart-container').style.display = 'none';
+            updateTree();
+        }
     });
     
     document.getElementById('root-person').addEventListener('change', (e) => {
         rootPersonId = e.target.value ? parseInt(e.target.value) : null;
-        updateTree();
+        if (currentLayout === 'fan') {
+            showFanChart(rootPersonId);
+        } else {
+            updateTree();
+        }
     });
     
     document.getElementById('export-image').addEventListener('click', exportTreeImage);
@@ -443,10 +755,16 @@ function renderTree() {
     let currentDraggedId = null;
     
     // Drag behavior létrehozása
+    let dragStartX = null, dragStartY = null;
+    let hasMoved = false;
+    
     const dragBehavior = d3.drag()
         .on('start', function(event, d) {
             isDragging = true;
             currentDraggedId = d.id;
+            dragStartX = d.x;
+            dragStartY = d.y;
+            hasMoved = false;
             d3.select(this).raise().classed('dragging', true);
             // Zoom kikapcsolása drag közben
             svg.on('.zoom', null);
@@ -491,6 +809,11 @@ function renderTree() {
         .on('drag', function(event, d) {
             let newX = event.x;
             let newY = event.y;
+            
+            // Check if actually moved (more than 3px threshold)
+            if (Math.abs(newX - dragStartX) > 3 || Math.abs(newY - dragStartY) > 3) {
+                hasMoved = true;
+            }
             
             // Snap logika - Y tengelyen (generációs szintek)
             let snappedY = null;
@@ -614,8 +937,15 @@ function renderTree() {
             // Zoom visszakapcsolása
             svg.call(zoom);
             
-            // Pozíció mentése az adatbázisba
-            saveNodePosition(d.id, d.x, d.y);
+            // Pozíció mentése CSAK ha ténylegesen mozgattuk
+            if (hasMoved) {
+                saveNodePosition(d.id, d.x, d.y);
+            }
+            
+            // Reset tracking
+            dragStartX = null;
+            dragStartY = null;
+            hasMoved = false;
             
             // Teljes vonal újrarajzolás
             redrawAllLinks(positionedNodes, layoutLinks);
@@ -2294,9 +2624,33 @@ function renderEmptyState() {
 
 // ==================== KÉP EXPORTÁLÁS ====================
 function exportTreeImage() {
-    const svgElement = document.getElementById('family-tree');
+    // Ellenőrizzük, melyik nézet aktív
+    const fanContainer = document.getElementById('fan-chart-container');
+    const isFanChartVisible = fanContainer && fanContainer.style.display !== 'none';
+    
+    let svgElement;
+    let fileName;
+    
+    if (isFanChartVisible) {
+        // Fan chart exportálása
+        svgElement = fanContainer.querySelector('svg');
+        fileName = 'family_fan_chart.png';
+    } else {
+        // Függőleges fa exportálása
+        svgElement = document.getElementById('family-tree');
+        fileName = 'family_tree.png';
+    }
+    
+    if (!svgElement) {
+        showNotification('Nincs exportálható diagram', 'warning');
+        return;
+    }
+    
     const mainGroup = svgElement.querySelector('g');
-    if (!mainGroup) return;
+    if (!mainGroup) {
+        showNotification('Nincs exportálható tartalom', 'warning');
+        return;
+    }
 
     // Határoló doboz és padding a teljes fa köré
     const bounds = mainGroup.getBBox();
@@ -2348,7 +2702,16 @@ function exportTreeImage() {
         // 2x scale a jobb minőségért
         canvas.width = exportWidth * 2;
         canvas.height = exportHeight * 2;
-        ctx.fillStyle = settings.background_color || '#F5F5F5';
+        
+        // Háttérszín: fan chart-nál dark mode figyelembevétele
+        const darkMode = document.documentElement.getAttribute('data-theme') === 'dark';
+        let bgColor;
+        if (isFanChartVisible) {
+            bgColor = darkMode ? '#1a1a2e' : '#f8f8f8';
+        } else {
+            bgColor = settings.background_color || '#F5F5F5';
+        }
+        ctx.fillStyle = bgColor;
         ctx.fillRect(0, 0, canvas.width, canvas.height);
         ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
 
@@ -2356,7 +2719,7 @@ function exportTreeImage() {
             const pngUrl = URL.createObjectURL(pngBlob);
             const a = document.createElement('a');
             a.href = pngUrl;
-            a.download = 'family_tree.png';
+            a.download = fileName;
             a.click();
             URL.revokeObjectURL(pngUrl);
         }, 'image/png');
@@ -2600,6 +2963,7 @@ async function createParentRelation(childId, parentId, parentGender) {
         const marriageData = {
             person1_id: parentId,
             person2_id: null,
+            relationship_type: 'marriage',
             status: 'active'
         };
         

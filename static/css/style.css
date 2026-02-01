@@ -75,6 +75,21 @@
     stroke: #5a6f8c !important;
 }
 
+/* Sötét mód - Fan Chart */
+[data-theme="dark"] #fan-chart-container {
+    background: #1a1a2e !important;
+}
+
+[data-theme="dark"] #fan-chart-container svg {
+    background: #1a1a2e !important;
+}
+
+[data-theme="dark"] .fan-tooltip {
+    background: #16213e !important;
+    border-color: #2d3a5c !important;
+    color: #e0e0e0 !important;
+}
+
 /* Sötét mód - Fülek és form elemek */
 [data-theme="dark"] .tab-btn {
     background: #2d3a5c;

@@ -55,7 +55,7 @@
                 <button class="btn btn-primary" id="add-person-btn">
                     <i class="fas fa-plus"></i> <span class="btn-text">Új személy</span>
                 </button>
-                <span class="version-badge" title="Verzió">v:28d2ea4</span>
+                <span class="version-badge" title="Verzió">v:07d2ca6-20260201-164950</span>
             </div>
         </nav>
 
@@ -84,6 +84,7 @@
                     <div class="toolbar-group">
                         <select id="tree-layout" class="toolbar-select">
                             <option value="vertical">Függőleges</option>
+                            <option value="fan">Legyező (Fan Chart)</option>
                         </select>
                         <select id="root-person" class="toolbar-select" required>
                         </select>
@@ -103,6 +104,7 @@
                 <div id="tree-container">
                     <svg id="family-tree"></svg>
                 </div>
+                <div id="fan-chart-container" style="display:none; width:100%; height:100%;"></div>
             </div>
 
             <!-- Személyek lista nézet -->

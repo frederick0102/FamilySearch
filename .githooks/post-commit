@@ -8,15 +8,17 @@ fi
 touch /tmp/.familysearch-post-commit-running
 
 COMMIT_HASH=$(git rev-parse --short HEAD)
+TIMESTAMP=$(date +"%Y%m%d-%H%M%S")
+VERSION_STRING="v:${COMMIT_HASH}-${TIMESTAMP}"
 INDEX_FILE="templates/index.html"
 
 # Frissítjük a verziószámot az index.html-ben
 if [ -f "$INDEX_FILE" ]; then
     # macOS és Linux kompatibilis sed
     if [[ "$OSTYPE" == "darwin"* ]]; then
-        sed -i '' "s/v:[a-f0-9]\{7\}/v:$COMMIT_HASH/g" "$INDEX_FILE"
+        sed -i '' "s/v:[a-f0-9]\{7\}\(-[0-9]\{8\}-[0-9]\{6\}\)\{0,1\}/$VERSION_STRING/g" "$INDEX_FILE"
     else
-        sed -i "s/v:[a-f0-9]\{7\}/v:$COMMIT_HASH/g" "$INDEX_FILE"
+        sed -i "s/v:[a-f0-9]\{7\}\(-[0-9]\{8\}-[0-9]\{6\}\)\{0,1\}/$VERSION_STRING/g" "$INDEX_FILE"
     fi
     
     # Ha változott, automatikusan hozzáadjuk a következő commithoz

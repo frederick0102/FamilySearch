@@ -1,3 +1,4 @@
+
 from flask import Blueprint, render_template, request, jsonify, current_app, redirect, url_for, session
 from werkzeug.utils import secure_filename
 from app import db
@@ -15,6 +16,7 @@ from datetime import datetime
 # Blueprint-ek létrehozása
 main_bp = Blueprint('main', __name__)
 api_bp = Blueprint('api', __name__)
+
 
 # Megengedett fájltípusok
 ALLOWED_EXTENSIONS = {'png', 'jpg', 'jpeg', 'gif', 'pdf', 'doc', 'docx'}
@@ -786,6 +788,39 @@ def get_descendants(person_id):
 
 
 # ==================== BEÁLLÍTÁSOK API ====================
+
+# ========== FAN CHART (SUNBURST) ===========
+@main_bp.route('/fan-chart/<int:person_id>')
+def fan_chart(person_id):
+    """
+    Sunburst/fan chart nézethez: visszaad egy D3 hierarchy-kompatibilis JSON-t,
+    ahol a root a kiválasztott személy, a 'children' a szülők (és azok szülei, stb.).
+    """
+    def build_ancestor_tree(person, depth=0, max_depth=10):
+        if not person or depth > max_depth:
+            return None
+        node = {
+            'id': person.id,
+            'name': person.full_name,
+            'birth_year': person.birth_date.year if person.birth_date else None,
+            'death_year': person.death_date.year if person.death_date else None,
+            'gender': person.gender,
+            'children': []
+        }
+        # Szülők (parent_family-n keresztül)
+        parents = person.parents
+        for parent in parents:
+            parent_node = build_ancestor_tree(parent, depth+1, max_depth)
+            if parent_node:
+                node['children'].append(parent_node)
+        # Ha nincs szülő, legyen üres children (D3 sunburst igényli)
+        if not node['children']:
+            node['children'] = []
+        return node
+
+    person = Person.query.get_or_404(person_id)
+    tree = build_ancestor_tree(person)
+    return jsonify(tree)
 
 @api_bp.route('/settings', methods=['GET'])
 @api_login_required

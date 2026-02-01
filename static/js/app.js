@@ -858,6 +858,11 @@ async function savePerson() {
         renderPersonsList();
         updateRootPersonSelector();
         updateTree();
+        
+        // Refresh fan chart if visible
+        if (typeof refreshFanChart === 'function') {
+            refreshFanChart();
+        }
     } catch (error) {
         showNotification('Hiba a mentés során', 'error');
     }
@@ -875,6 +880,12 @@ async function deletePerson() {
             renderPersonsList();
             updateRootPersonSelector();
             updateTree();
+            
+            // Refresh fan chart if visible
+            if (typeof refreshFanChart === 'function') {
+                refreshFanChart();
+            }
+            
             await loadTrash();
         } catch (error) {
             showNotification('Hiba a törlés során', 'error');
@@ -1676,6 +1687,12 @@ function initThemeToggle() {
         
         document.documentElement.setAttribute('data-theme', newTheme);
         localStorage.setItem('theme', newTheme);
+        
+        // Re-render fan chart if visible
+        const fanContainer = document.getElementById('fan-chart-container');
+        if (fanContainer && fanContainer.style.display !== 'none' && typeof refreshFanChart === 'function') {
+            refreshFanChart();
+        }
     });
 }
 
